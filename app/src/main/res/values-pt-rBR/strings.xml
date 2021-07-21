@@ -23,7 +23,6 @@
     <string name="patterns_allowed">Padrões permitidos</string>
     <string name="declared_permission">Permissões</string>
     <string name="group">Grupo</string>
-    <string name="protection_level">Nível de proteção</string>
     <string name="uses_feature">Funções utilizadas</string>
     <string name="no_feature">Nenhuma função</string>
     <string name="sort_by_sha">Assinatura</string>
@@ -308,10 +307,6 @@
     <string name="install">Instalar</string>
     <string name="update">Atualizar</string>
     <string name="source_code">Código Fonte</string>
-    <string name="community">Comunidade no Telegram</string>
-    <string name="community_links">Canal de atualizações: https://t.me/AppManagerChannel
-\nGrupo de suporte: https://t.me/AppManagerAndroid
-\nTwitter: https://twitter.com/AMUpdateChannel</string>
     <string name="pref_import_existing">Importar regras existentes</string>
     <string name="pref_import_existing_msg">Adicione componentes desativados por outros aplicativos ao App Manager. Tenha cuidado ao usar essa ferramenta, pois podem haver muitos falsos positivos. Escolha apenas os aplicativos sobre os quais você tem certeza.</string>
     <string name="clear_cache">Limpar Cache</string>
@@ -439,7 +434,6 @@
     <string name="input_features">Inserir funções</string>
     <string name="shared_user_id">ID de Usuário Compartilhado</string>
     <string name="sort_by_shared_user_id">ID de Usuário compartilhado</string>
-    <string name="gles_ver">Versão requerida do OpenGL ES</string>
     <string name="shared_libs">Bibliotecas compartilhadas</string>
     <string name="flags">Flags</string>
     <string name="soft_input">Modo de entrada suave</string>
@@ -732,8 +726,6 @@
     <string name="cpu">CPU</string>
     <string name="users">Usuários</string>
     <string name="languages">Idiomas</string>
-    <string name="unavailable">Não disponível</string>
-    <string name="available">Disponível</string>
     <string name="battery_capacity">Capacidade</string>
     <string name="memory">Memória RAM</string>
     <string name="vendor">Fornecedor</string>
@@ -869,10 +861,6 @@
 \nCodeberg: https://codeberg.org/muntashir/AppManager</string>
     <string name="bouncy_castle_keystore">Bouncy Castle KeyStore (BKS)</string>
     <string name="input_key">Insira uma chave (em hexadecimal)</string>
-    <plurals name="items_selected">
-        <item quantity="one"><xliff:g id="selection_no" example="20">%1$d</xliff:g> selecionado</item>
-        <item quantity="other"><xliff:g id="selection_no" example="20">%1$d</xliff:g> selecionados</item>
-    </plurals>
     <string name="expiry_date_cannot_be_empty">A data de validade não pode estar vazia.</string>
     <string name="signing_key">Assinando chave</string>
     <string name="failed_to_read_keystore">Não foi possível ler a KeyStore.</string>
@@ -941,7 +929,6 @@
     <string name="toast_invalid_selection">Seleção inválida. Por favor, tente de novo.</string>
     <string name="toast_invalid_level">Nome de nível inválido: %s</string>
     <string name="pref_display_limit_hint">Digite um número válido entre %1$d e %2$d.</string>
-    <string name="title_filters">Filtros</string>
     <string name="text_include_device_info">Incluir informações do dispositivo</string>
     <string name="text_filter_text">Texto do filtro</string>
     <string name="text_filter_ellipsis">Filtro…</string>
@@ -1038,4 +1025,31 @@
     <string name="wireless_debugging_not_supported">A depuração sem fio não é suportada nesta plataforma.</string>
     <string name="wireless_debugging">Depuração sem fio</string>
     <string name="unknown_net_policy">Política de rede desconhecida (%1$s - %2$X)</string>
+    <string name="fallback_to_no_root_mode_description">O App Manager não pôde usar o modo de operação atual. Para evitar comportamentos aleatórios, você deve mudar temporariamente para o modo sem root. Considere reportá-lo se o problema não for corrigido após a reinicialização do dispositivo.</string>
+    <string name="fallback_to_no_root_mode">Recuar ao modo sem root\?</string>
+    <string name="failed_to_prevent_background_run">Não foi possível impedir que %1$s funcionasse em segundo plano</string>
+    <string name="app_signing_signature_mismatch_for_data_only_app">Não foi possível instalar o aplicativo devido ao descompasso de assinatura. O aplicativo foi desinstalado sem limpar seus dados.</string>
+    <string name="community_links">Telegram: https://t.me/AppManagerChannel
+\nTwitter: https://twitter.com/AppManagerNews</string>
+    <string name="community">Comunidade</string>
+    <plurals name="alert_failed_to_import_backups">
+        <item quantity="one">%1$d backup não pôde ser importado</item>
+        <item quantity="other">%1$d backups não puderam ser importados</item>
+    </plurals>
+    <string name="import_from_oab_tb_msg">Os backups devem estar localizados em %s.</string>
+    <string name="import_from_tb">Importar do Titanium Backup</string>
+    <string name="import_from_oab">Importar do OAndBackup</string>
+    <string name="pref_import_backups_msg">Importar backups do OAndBackup ou Titanium Backup.</string>
+    <string name="pref_import_backups">Importar backups</string>
+    <string name="help_app_ops_tab">Clique em um item para <b>permitir</b> ou <b>ignorar</b> ele. Aperte e segure em um item para ver outros modos suportados.</string>
+    <string name="help_permissions_tab">Essas permissões são definidas por este aplicativo e não podem ser revogadas.</string>
+    <string name="help_uses_permissions_tab">Clique em um item para <b>conceder</b> ou <b>revogar</b> ele. Somente permissões <b>perigosas</b> e de <b>desenvolvimento</b> podem ser concedidas ou revogadas.</string>
+    <string name="minimum_version">Versão min: %d</string>
+    <string name="added_to_queue">Adicionado à fila</string>
+    <string name="saved_filters">Filtros salvos</string>
+    <string name="permission_flags">Bandeiras de permissão</string>
+    <string name="pref_selected_users_msg">Restringir o App Manager a trabalhar apenas com os usuários selecionados.</string>
+    <string name="pref_selected_users">Usuários selecionados</string>
+    <string name="enable_disable">Ativar/desativar</string>
+    <string name="error_with_details">Erro: %s</string>
 </resources>

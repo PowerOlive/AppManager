@@ -29,9 +29,7 @@
     <string name="declared_permission">Berechtigungen</string>
     <string name="shared_libs">Geteilte Bibliotheken</string>
     <string name="group">Gruppe</string>
-    <string name="protection_level">Schutz-Level</string>
     <string name="uses_feature">Benutzt Funktionalitäten</string>
-    <string name="gles_ver">Benötigte OpenGL ES-Version</string>
     <string name="no_feature">Keine Funktionalitäten</string>
     <string name="sort_by_shared_user_id">Geteilte Nutzer-ID</string>
     <string name="shared_user_id">Geteilte Nutzer-ID</string>
@@ -338,10 +336,6 @@
     <string name="install">Installieren</string>
     <string name="update">Aktualisieren</string>
     <string name="source_code">Quellcode</string>
-    <string name="community">Telegram-Gemeinschaft</string>
-    <string name="community_links">Telegram-Update-Channel: https://t.me/AppManagerChannel
-\nHilfe-Gruppe (auf Englisch): https://t.me/AppManagerAndroid
-\nTwitter: https://twitter.com/AMUpdateChannel</string>
     <string name="pref_import_existing">Existierende Regeln importieren</string>
     <string name="pref_import_existing_msg">Hinzufügen von Komponenten zum App Manager, die von anderen Anwendungen deaktiviert wurden. Seien Sie bei der Verwendung dieses Tools vorsichtig, da es viele Fehlalarme geben kann. Wählen Sie nur die Anwendungen aus, bei denen Sie sich sicher sind.</string>
     <string name="clear_cache">Cache leeren</string>
@@ -733,8 +727,6 @@
     <string name="cpu">CPU</string>
     <string name="users">Nutzer</string>
     <string name="languages">Sprachen</string>
-    <string name="unavailable">Nicht vorhanden</string>
-    <string name="available">Verfügbar</string>
     <string name="battery_capacity">Kapazität</string>
     <string name="memory">Speicher</string>
     <string name="vendor">Hersteller</string>
@@ -760,7 +752,7 @@
     <string name="backup_rules_description">Im App Manager konfigurierte Regeln sichern.</string>
     <string name="backup_extras_description">Sichern Sie App-Berechtigungen, Batteriespar- und Datennutzungsoptionen, MagiskHide-Status, SSAID usw.</string>
     <string name="backup_extras">Zusätze</string>
-    <string name="backup_cache_description">Die Ordner <b>cache</b>, <b>no_cache</b> und <b>no_backup</b> werden nicht gesichert.</string>
+    <string name="backup_cache_description">Die Ordner <b>cache</b>, <b>no_cache</b> und <b>no_backup</b> werden gesichert.</string>
     <string name="backup_obb_media_description">Sichern der OBB- und Medienordner.</string>
     <string name="backup_external_data_description">Sichern Sie die externen Datenordner.</string>
     <string name="backup_internal_data_description">Sichern Sie die Datenordner. Wenn diese Option ausgewählt ist, werden die internen Datenordner standardmäßig gesichert.</string>
@@ -911,10 +903,6 @@
     <string name="restart_log_viewer_to_see_changes">Starten Sie das Fenster des Log-Betrachters neu, um die Änderungen zu sehen.</string>
     <string name="log_viewer">Log-Betrachter</string>
     <string name="pref_log_viewer_msg">Konfigurieren Sie, wie Protokolle angezeigt werden.</string>
-    <plurals name="items_selected">
-        <item quantity="one"><xliff:g id="selection_no" example="20">%1$d</xliff:g> ausgewählt</item>
-        <item quantity="other"><xliff:g id="selection_no" example="20">%1$d</xliff:g> ausgewählt</item>
-    </plurals>
     <string name="pref_installer_msg">Konfigurieren Sie die Einstellungen für das App-Installationsprogramms.</string>
     <string name="expiry_date_cannot_be_empty">Das Verfallsdatum kann nicht leer sein.</string>
     <string name="signing_key">Signierschlüssel</string>
@@ -1002,7 +990,6 @@
     <string name="toast_invalid_selection">Ungültige Auswahl. Bitte nochmals versuchen.</string>
     <string name="toast_invalid_level">Ungültiger Level-Name: %s</string>
     <string name="pref_display_limit_hint">Bitte eine gültige Zahl zwischen %1$d und %2$d eingeben.</string>
-    <string name="title_filters">Filter</string>
     <string name="text_include_device_info">Geräteinformationen mit einschließen</string>
     <string name="text_filter_text">Text filtern</string>
     <string name="text_filter_ellipsis">Filter…</string>
@@ -1038,4 +1025,31 @@
     <string name="wireless_debugging_not_supported">Fehlersucher über Funk wird auf dieser Plattform nicht unterstützt.</string>
     <string name="wireless_debugging">Fehlersuche über WLAN</string>
     <string name="unknown_net_policy">Unbekannte Netz-Richtlinie (%1$s - %2$X)</string>
+    <string name="fallback_to_no_root_mode_description">Der App Manager konnte die aktuelle Betriebsart nicht verwenden. Um zufälliges Verhalten zu vermeiden, sollten Sie vorübergehend in den No-Root-Modus wechseln. Ziehen Sie eine Fehlermeldung in Betracht, wenn das Problem nach einem Neustart des Geräts nicht behoben ist.</string>
+    <string name="fallback_to_no_root_mode">Fallback zum No-Root-Modus\?</string>
+    <string name="failed_to_prevent_background_run">Konnte nicht verhindern, dass %1$s im Hintergrund läuft</string>
+    <string name="app_signing_signature_mismatch_for_data_only_app">Konnte die App aufgrund von Signaturfehlern nicht installieren. Die App wurde deinstalliert, ohne ihre Daten zu löschen.</string>
+    <string name="community">Gemeinschaft</string>
+    <string name="community_links">Telegram: https://t.me/AppManagerChannel
+\nTwitter: https://twitter.com/AppManagerNews</string>
+    <plurals name="alert_failed_to_import_backups">
+        <item quantity="one">Konnte %1$d Sicherung nicht importieren</item>
+        <item quantity="other">Konnte %1$d Sicherung en nicht importieren</item>
+    </plurals>
+    <string name="import_from_tb">Importieren aus Titanium Backup</string>
+    <string name="import_from_oab_tb_msg">Die Sicherungen müssen sich unter %s befinden.</string>
+    <string name="import_from_oab">Importieren von OAndBackup</string>
+    <string name="pref_import_backups_msg">Importieren von Sicherungen aus OAndBackup oder Titanium Backup.</string>
+    <string name="pref_import_backups">Sicherungen importieren</string>
+    <string name="added_to_queue">Zur Warteschlange hinzugefügt</string>
+    <string name="minimum_version">Minimale Version: %d</string>
+    <string name="help_uses_permissions_tab">Klicken Sie auf ein Element, um es <b>zu gewähren</b> oder <b>zu entziehen</b>. Nur die Berechtigungen <b>Gefahr</b> und <b>Entwicklung</b> können gewährt oder entzogen werden.</string>
+    <string name="help_permissions_tab">Diese Berechtigungen werden von dieser App festgelegt und können nicht widerrufen werden.</string>
+    <string name="help_app_ops_tab">Klicken Sie auf ein Element, um es zu <b>zulassen</b> oder <b>zu ignorieren</b>. Klicken Sie lange auf ein Element, um andere unterstützte Modi anzuzeigen.</string>
+    <string name="enable_disable">Aktivieren/Deaktivieren</string>
+    <string name="error_with_details">Fehler: %s</string>
+    <string name="saved_filters">Gespeicherte Filter</string>
+    <string name="permission_flags">Berechtigungskennzeichen</string>
+    <string name="pref_selected_users_msg">Beschränken des App Manager auf die ausgewählten Benutzer.</string>
+    <string name="pref_selected_users">Ausgewählte Nutzer</string>
 </resources>

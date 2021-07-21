@@ -38,14 +38,14 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent">
 
-            <io.github.muntashirakon.AppManager.types.RecyclerViewWithEmptyView
+            <io.github.muntashirakon.widget.RecyclerViewWithEmptyView
                 android:id="@+id/recycler_view"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scrollbars="none"
                 tools:listitem="@layout/item_app_details_primary" />
 
-            <TextView
+            <androidx.appcompat.widget.AppCompatTextView
                 android:id="@android:id/empty"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"

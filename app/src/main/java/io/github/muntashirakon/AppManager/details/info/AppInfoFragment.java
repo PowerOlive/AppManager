@@ -15,6 +15,7 @@ import android.content.pm.ResolveInfo;
 import android.content.pm.Signature;
 import android.graphics.Bitmap;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.net.NetworkPolicyManager;
 import android.net.Uri;
 import android.os.Build;
@@ -34,7 +35,6 @@ import android.view.ViewGroup;
 import android.webkit.MimeTypeMap;
 import android.widget.Button;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.activity.result.ActivityResult;
@@ -43,16 +43,17 @@ import androidx.annotation.AnyThread;
 import androidx.annotation.ColorRes;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.GuardedBy;
+import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.UiThread;
 import androidx.annotation.WorkerThread;
 import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.widget.LinearLayoutCompat;
 import androidx.collection.ArrayMap;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.core.content.FileProvider;
 import androidx.core.content.pm.PackageInfoCompat;
 import androidx.fragment.app.Fragment;
 import androidx.lifecycle.ViewModelProvider;
@@ -82,6 +83,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.BuildConfig;
 import io.github.muntashirakon.AppManager.R;
 import io.github.muntashirakon.AppManager.apk.ApkFile;
@@ -95,6 +97,7 @@ import io.github.muntashirakon.AppManager.details.AppDetailsFragment;
 import io.github.muntashirakon.AppManager.details.AppDetailsViewModel;
 import io.github.muntashirakon.AppManager.details.ManifestViewerActivity;
 import io.github.muntashirakon.AppManager.details.struct.AppDetailsItem;
+import io.github.muntashirakon.AppManager.fm.FmProvider;
 import io.github.muntashirakon.AppManager.logcat.LogViewerActivity;
 import io.github.muntashirakon.AppManager.logcat.struct.SearchCriteria;
 import io.github.muntashirakon.AppManager.logs.Log;
@@ -109,7 +112,6 @@ import io.github.muntashirakon.AppManager.servermanager.NetworkPolicyManagerComp
 import io.github.muntashirakon.AppManager.servermanager.PackageManagerCompat;
 import io.github.muntashirakon.AppManager.settings.FeatureController;
 import io.github.muntashirakon.AppManager.sharedpref.SharedPrefsActivity;
-import io.github.muntashirakon.AppManager.types.IconLoaderThread;
 import io.github.muntashirakon.AppManager.types.PackageSizeInfo;
 import io.github.muntashirakon.AppManager.types.ScrollableDialogBuilder;
 import io.github.muntashirakon.AppManager.types.SearchableMultiChoiceDialogBuilder;
@@ -120,7 +122,7 @@ import io.github.muntashirakon.AppManager.utils.ArrayUtils;
 import io.github.muntashirakon.AppManager.utils.BetterActivityResult;
 import io.github.muntashirakon.AppManager.utils.DateUtils;
 import io.github.muntashirakon.AppManager.utils.DigestUtils;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
 import io.github.muntashirakon.AppManager.utils.KeyStoreUtils;
 import io.github.muntashirakon.AppManager.utils.MagiskUtils;
 import io.github.muntashirakon.AppManager.utils.PackageUtils;
@@ -129,6 +131,7 @@ import io.github.muntashirakon.AppManager.utils.SsaidSettings;
 import io.github.muntashirakon.AppManager.utils.UIUtils;
 import io.github.muntashirakon.AppManager.utils.UiThreadHandler;
 import io.github.muntashirakon.AppManager.utils.Utils;
+import io.github.muntashirakon.io.Path;
 import io.github.muntashirakon.io.ProxyFile;
 
 import static io.github.muntashirakon.AppManager.details.info.ListItem.LIST_ITEM_FLAG_MONOSPACE;
@@ -151,7 +154,7 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
     private PackageInfo mInstalledPackageInfo;
     private AppDetailsActivity mActivity;
     private ApplicationInfo mApplicationInfo;
-    private LinearLayout mHorizontalLayout;
+    private LinearLayoutCompat mHorizontalLayout;
     private ChipGroup mTagCloud;
     private SwipeRefreshLayout mSwipeRefresh;
     private CharSequence mPackageLabel;
@@ -165,7 +168,6 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
     private TextView packageNameView;
     private TextView versionView;
     private ImageView iconView;
-    private IconLoaderThread iconLoaderThread;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(3);
 
@@ -245,6 +247,8 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
                 AppDetailsItem appDetailsItem = appDetailsItems.get(0);
                 mPackageInfo = (PackageInfo) appDetailsItem.vanillaItem;
                 mPackageName = appDetailsItem.name;
+                mInstalledPackageInfo = mainModel.getInstalledPackageInfo();
+                mApplicationInfo = mPackageInfo.applicationInfo;
                 // Set package name
                 packageNameView.setText(mPackageName);
                 packageNameView.setOnClickListener(v -> {
@@ -328,14 +332,15 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
         } else if (itemId == R.id.action_share_apk) {
             executor.submit(() -> {
                 try {
-                    File tmpApkSource = ApkUtils.getSharableApkFile(mPackageInfo);
-                    runOnUiThread(() -> {
+                    Path tmpApkSource = ApkUtils.getSharableApkFile(mPackageInfo);
+                    UiThreadHandler.run(() -> {
+                        Context ctx = AppManager.getContext();
                         Intent intent = new Intent(Intent.ACTION_SEND)
                                 .setType("application/*")
-                                .putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(mActivity,
-                                        BuildConfig.APPLICATION_ID + ".provider", tmpApkSource))
+                                .putExtra(Intent.EXTRA_STREAM, FmProvider.getContentUri(tmpApkSource))
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        startActivity(Intent.createChooser(intent, getString(R.string.share_apk)));
+                        ctx.startActivity(Intent.createChooser(intent, ctx.getString(R.string.share_apk))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                     });
                 } catch (Exception e) {
                     Log.e(TAG, e);
@@ -458,7 +463,7 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
                         if (outputStream == null) {
                             throw new IOException("Unable to open output stream.");
                         }
-                        Bitmap bitmap = IOUtils.getBitmapFromDrawable(mApplicationInfo.loadIcon(mPackageManager));
+                        Bitmap bitmap = FileUtils.getBitmapFromDrawable(mApplicationInfo.loadIcon(mPackageManager));
                         bitmap.compress(Bitmap.CompressFormat.PNG, 100, outputStream);
                         outputStream.flush();
                         displayShortToast(R.string.saved_successfully);
@@ -529,7 +534,7 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
     @Override
     public void onDestroy() {
         if (mActivity != null) {
-            IOUtils.deleteDir(mActivity.getExternalCacheDir());
+            FileUtils.deleteDir(mActivity.getExternalCacheDir());
         }
         super.onDestroy();
     }
@@ -860,14 +865,13 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
             if (isRootEnabled || isAdbEnabled) {
                 if (mApplicationInfo.enabled) {
                     addToHorizontalLayout(R.string.disable, R.drawable.ic_block_black_24dp).setOnClickListener(v -> {
-                        try {
-                            PackageManagerCompat.setApplicationEnabledSetting(mPackageName,
-                                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
-                                    0, mainModel.getUserHandle());
-                        } catch (RemoteException e) {
-                            Log.e(TAG, e);
-                            displayLongToast(R.string.failed_to_disable, mPackageLabel);
-                        }
+                        if (BuildConfig.APPLICATION_ID.equals(mPackageName)) {
+                            new MaterialAlertDialogBuilder(mActivity)
+                                    .setMessage(R.string.are_you_sure)
+                                    .setPositiveButton(R.string.yes, (d, w) -> disable())
+                                    .setNegativeButton(R.string.no, null)
+                                    .show();
+                        } else disable();
                     });
                 }
             }
@@ -921,7 +925,7 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
                             PackageManagerCompat.setApplicationEnabledSetting(mPackageName,
                                     PackageManager.COMPONENT_ENABLED_STATE_ENABLED, 0,
                                     mainModel.getUserHandle());
-                        } catch (RemoteException e) {
+                        } catch (RemoteException | SecurityException e) {
                             Log.e(TAG, e);
                             displayLongToast(R.string.failed_to_enable, mPackageLabel);
                         }
@@ -1086,8 +1090,16 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
                 addToHorizontalLayout(R.string.databases, R.drawable.ic_assignment_black_24dp)
                         .setOnClickListener(v -> new MaterialAlertDialogBuilder(mActivity)
                                 .setTitle(R.string.databases)
-                                .setItems(databases2, (dialog, which) -> {
-                                    // TODO(10/9/20): Need a custom ContentProvider
+                                .setItems(databases2, (dialog, i) -> {
+                                    // TODO: 7/7/21 VACUUM the database before opening it
+                                    Context ctx = AppManager.getContext();
+                                    Path dbPath = new Path(ctx, databases.get(i));
+                                    Intent openFile = new Intent(Intent.ACTION_VIEW);
+                                    openFile.setDataAndType(FmProvider.getContentUri(dbPath), "application/vnd.sqlite3");
+                                    openFile.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                                    if (openFile.resolveActivityInfo(ctx.getPackageManager(), 0) != null) {
+                                        ctx.startActivity(openFile);
+                                    }
                                 })
                                 .setNegativeButton(R.string.ok, null)
                                 .show());
@@ -1108,8 +1120,11 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
         }
         // Set Aurora Store
         try {
-            if (!mPackageManager.getApplicationInfo(PACKAGE_NAME_AURORA_STORE, 0).enabled)
+            PackageInfo auroraInfo = mPackageManager.getPackageInfo(PACKAGE_NAME_AURORA_STORE, 0);
+            if (PackageInfoCompat.getLongVersionCode(auroraInfo) == 36L || !auroraInfo.applicationInfo.enabled) {
+                // Aurora Store is disabled or the installed version has promotional apps
                 throw new PackageManager.NameNotFoundException();
+            }
             addToHorizontalLayout(R.string.store, R.drawable.ic_frost_aurorastore_black_24dp)
                     .setOnClickListener(v -> {
                         Intent intent = new Intent(Intent.ACTION_VIEW);
@@ -1123,6 +1138,8 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
                     });
         } catch (PackageManager.NameNotFoundException ignored) {
         }
+        View v = mHorizontalLayout.getChildAt(0);
+        if (v != null) v.requestFocus();
     }
 
     @GuardedBy("mListItems")
@@ -1279,7 +1296,8 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
 
     private ProxyFile[] getDatabases(@NonNull String sourceDir) {
         ProxyFile sharedPath = new ProxyFile(sourceDir, "databases");
-        return sharedPath.listFiles((dir, name) -> !name.endsWith("-journal"));
+        return sharedPath.listFiles((dir, name) -> !(name.endsWith("-journal")
+                || name.endsWith("-wal") || name.endsWith("-shm")));
     }
 
     @NonNull
@@ -1381,13 +1399,13 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
 
     @WorkerThread
     private void loadPackageInfo() {
-        if (mainModel == null) return;  // Should never happen but checked anyway
-        mInstalledPackageInfo = mainModel.getInstalledPackageInfo();
-        mApplicationInfo = mPackageInfo.applicationInfo;
         // Set App Icon
-        if (iconLoaderThread != null) iconLoaderThread.interrupt();
-        iconLoaderThread = new IconLoaderThread(iconView, mApplicationInfo);
-        iconLoaderThread.start();
+        Drawable icon = mApplicationInfo.loadIcon(mPackageManager);
+        runOnUiThread(() -> {
+            if (isAdded() && !isDetached()) {
+                iconView.setImageDrawable(icon);
+            }
+        });
         // (Re)load views
         model.loadPackageLabel();
         model.loadTagCloud();
@@ -1398,6 +1416,18 @@ public class AppInfoFragment extends Fragment implements SwipeRefreshLayout.OnRe
         });
         model.loadAppInfo();
         runOnUiThread(() -> showProgressIndicator(false));
+    }
+
+    @MainThread
+    private void disable() {
+        try {
+            PackageManagerCompat.setApplicationEnabledSetting(mPackageName,
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER,
+                    0, mainModel.getUserHandle());
+        } catch (RemoteException | SecurityException e) {
+            Log.e(TAG, e);
+            displayLongToast(R.string.failed_to_disable, mPackageLabel);
+        }
     }
 
     /**

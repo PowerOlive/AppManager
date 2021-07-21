@@ -26,6 +26,7 @@ import androidx.lifecycle.ViewModelProvider;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import java.io.File;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -46,21 +47,23 @@ public class PackageInstallerActivity extends BaseActivity implements WhatsNewDi
     public static final String EXTRA_APK_FILE_KEY = "EXTRA_APK_FILE_KEY";
     public static final String ACTION_PACKAGE_INSTALLED = BuildConfig.APPLICATION_ID + ".action.PACKAGE_INSTALLED";
 
-    private int actionName;
-    private FragmentManager fm;
-    private AlertDialog progressDialog;
     private int sessionId = -1;
-    private PackageInstallerViewModel model;
-    private final StoragePermission storagePermission = StoragePermission.init(this);
+    private String packageName;
     private final ActivityResultLauncher<Intent> confirmIntentLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(), result -> {
                 // User did some interaction and the installer screen is closed now
-                Intent broadcastIntent = new Intent(AMPackageInstaller.ACTION_INSTALL_INTERACTION_END);
-                broadcastIntent.putExtra(PackageInstaller.EXTRA_PACKAGE_NAME, model.getPackageName());
+                Intent broadcastIntent = new Intent(PackageInstallerCompat.ACTION_INSTALL_INTERACTION_END);
+                broadcastIntent.putExtra(PackageInstaller.EXTRA_PACKAGE_NAME, packageName);
                 broadcastIntent.putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId);
                 getApplicationContext().sendBroadcast(broadcastIntent);
                 triggerCancel();
             });
+
+    private int actionName;
+    private FragmentManager fm;
+    private AlertDialog progressDialog;
+    private PackageInstallerViewModel model;
+    private final StoragePermission storagePermission = StoragePermission.init(this);
     private final ActivityResultLauncher<Intent> uninstallIntentLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result -> {
@@ -69,6 +72,7 @@ public class PackageInstallerActivity extends BaseActivity implements WhatsNewDi
                     getPackageManager().getPackageInfo(model.getPackageName(), 0);
                     // The package is still installed meaning that the app uninstall wasn't successful
                     UIUtils.displayLongToast(R.string.failed_to_install_package_name, model.getAppLabel());
+                    triggerCancel();
                 } catch (PackageManager.NameNotFoundException e) {
                     install();
                 }
@@ -244,7 +248,7 @@ public class PackageInstallerActivity extends BaseActivity implements WhatsNewDi
                 return;
             }
         }
-        doLaunchInstallerService(Users.getCurrentUserHandle());
+        doLaunchInstallerService(Users.myUserId());
     }
 
     private void doLaunchInstallerService(int userHandle) {
@@ -265,18 +269,15 @@ public class PackageInstallerActivity extends BaseActivity implements WhatsNewDi
         // Check for action first
         if (ACTION_PACKAGE_INSTALLED.equals(intent.getAction())) {
             sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1);
+            packageName = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME);
+            Intent confirmIntent = intent.getParcelableExtra(Intent.EXTRA_INTENT);
             try {
-                Intent confirmIntent = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-                String packageName = intent.getStringExtra(PackageInstaller.EXTRA_PACKAGE_NAME);
-                if (confirmIntent == null) throw new Exception("Empty confirmation intent.");
-                if (!model.getPackageName().equals(packageName)) {
-                    throw new Exception("Current package name doesn't match with the package name sent to confirm intent");
-                }
-                Log.d("PIA", "Requesting user confirmation for package " + model.getPackageName());
+                if (packageName == null || confirmIntent == null) throw new Exception("Empty confirmation intent.");
+                Log.d("PIA", "Requesting user confirmation for package " + packageName);
                 confirmIntentLauncher.launch(confirmIntent);
             } catch (Exception e) {
                 e.printStackTrace();
-                AMPackageInstaller.sendCompletedBroadcast(model.getPackageName(), AMPackageInstaller.STATUS_FAILURE_INCOMPATIBLE_ROM, sessionId);
+                PackageInstallerCompat.sendCompletedBroadcast(packageName, PackageInstallerCompat.STATUS_FAILURE_INCOMPATIBLE_ROM, sessionId);
                 triggerCancel();
             }
         }
@@ -285,54 +286,63 @@ public class PackageInstallerActivity extends BaseActivity implements WhatsNewDi
     @UiThread
     @Override
     public void triggerInstall() {
-        if (model.isSignatureDifferent()) {
-            // Signature is different, offer to uninstall and then install apk
-            // only if the app is not a system app
-            // TODO(8/10/20): Handle apps uninstalled with DONT_DELETE_DATA flag
-            ApplicationInfo info = model.getInstalledPackageInfo().applicationInfo;  // Installed package info is never null here.
-            if ((info.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
-                UIUtils.displayLongToast(R.string.app_signing_signature_mismatch_for_system_apps);
-                return;
-            }
-            SpannableStringBuilder builder = new SpannableStringBuilder()
-                    .append(getString(R.string.do_you_want_to_uninstall_and_install)).append(" ")
-                    .append(UIUtils.getItalicString(getString(R.string.app_data_will_be_lost)))
-                    .append("\n\n");
-            int start = builder.length();
-            builder.append(getText(R.string.app_signing_install_without_data_loss));
-            builder.setSpan(new RelativeSizeSpan(0.8f), start, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-
-            new MaterialAlertDialogBuilder(PackageInstallerActivity.this)
-                    .setCustomTitle(getDialogTitle(PackageInstallerActivity.this, model.getAppLabel(),
-                            model.getAppIcon(), model.getVersionWithTrackers()))
-                    .setMessage(builder)
-                    .setPositiveButton(R.string.yes, (dialog, which) -> {
-                        // Uninstall and then install again
-                        if (AppPref.isRootOrAdbEnabled()) {
-                            // User must be all
-                            try {
-                                PackageInstallerCompat.uninstall(model.getPackageName(),
-                                        Users.USER_ALL, false);
-                                install();
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                                UIUtils.displayLongToast(R.string.failed_to_uninstall, model.getAppLabel());
-                            }
-                        } else {
-                            // Uninstall using service, not guaranteed to work
-                            // since it only uninstalls for the current user
-                            Intent intent = new Intent(Intent.ACTION_DELETE);
-                            intent.setData(Uri.parse("package:" + model.getPackageName()));
-                            uninstallIntentLauncher.launch(intent);
-                        }
-                    })
-                    .setNegativeButton(R.string.no, (dialog, which) -> triggerCancel())
-                    .setNeutralButton(R.string.only_install, (dialog, which) -> install())
-                    .show();
-        } else {
+        if (!model.isSignatureDifferent()) {
             // Signature is either matched or the app isn't installed
             install();
+            return;
         }
+        // Signature is different
+        ApplicationInfo info = model.getInstalledPackageInfo().applicationInfo;  // Installed package info is never null here.
+        if ((info.flags & ApplicationInfo.FLAG_SYSTEM) != 0) {
+            // Cannot reinstall a system app with a different signature
+            UIUtils.displayLongToast(R.string.app_signing_signature_mismatch_for_system_apps);
+            triggerCancel();
+            return;
+        }
+        if (!new File(info.publicSourceDir).exists()) {
+            // Cannot reinstall an uninstalled app
+            UIUtils.displayLongToast(R.string.app_signing_signature_mismatch_for_data_only_app);
+            triggerCancel();
+            return;
+        }
+        // Offer user to uninstall and then install the app again
+        SpannableStringBuilder builder = new SpannableStringBuilder()
+                .append(getString(R.string.do_you_want_to_uninstall_and_install)).append(" ")
+                .append(UIUtils.getItalicString(getString(R.string.app_data_will_be_lost)))
+                .append("\n\n");
+        int start = builder.length();
+        builder.append(getText(R.string.app_signing_install_without_data_loss));
+        builder.setSpan(new RelativeSizeSpan(0.8f), start, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        new MaterialAlertDialogBuilder(PackageInstallerActivity.this)
+                .setCustomTitle(getDialogTitle(PackageInstallerActivity.this, model.getAppLabel(),
+                        model.getAppIcon(), model.getVersionWithTrackers()))
+                .setMessage(builder)
+                .setPositiveButton(R.string.yes, (dialog, which) -> {
+                    // Uninstall and then install again
+                    if (AppPref.isRootOrAdbEnabled()) {
+                        // User must be all
+                        try {
+                            PackageInstallerCompat.uninstall(model.getPackageName(),
+                                    Users.USER_ALL, false);
+                            install();
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                            UIUtils.displayLongToast(R.string.failed_to_uninstall, model.getAppLabel());
+                            triggerCancel();
+                        }
+                    } else {
+                        // Uninstall using service, not guaranteed to work
+                        // since it only uninstalls for the current user
+                        Intent intent = new Intent(Intent.ACTION_DELETE);
+                        intent.setData(Uri.parse("package:" + model.getPackageName()));
+                        uninstallIntentLauncher.launch(intent);
+                    }
+                })
+                .setNegativeButton(R.string.no, (dialog, which) -> triggerCancel())
+                .setNeutralButton(R.string.only_install, (dialog, which) -> install())
+                .setCancelable(false)
+                .show();
     }
 
     @Override

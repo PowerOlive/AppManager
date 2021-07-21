@@ -15,6 +15,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
 import android.content.pm.ProviderInfo;
 import android.content.pm.ServiceInfo;
+import android.content.pm.UserInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.DeadSystemException;
@@ -68,14 +69,16 @@ import io.github.muntashirakon.AppManager.rules.struct.RuleEntry;
 import io.github.muntashirakon.AppManager.servermanager.PackageManagerCompat;
 import io.github.muntashirakon.AppManager.servermanager.PermissionCompat;
 import io.github.muntashirakon.AppManager.types.PackageChangeReceiver;
+import io.github.muntashirakon.AppManager.users.Users;
 import io.github.muntashirakon.AppManager.utils.AppPref;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
 import io.github.muntashirakon.AppManager.utils.PermissionUtils;
 
 import static io.github.muntashirakon.AppManager.appops.AppOpsManager.OP_NONE;
 import static io.github.muntashirakon.AppManager.utils.PackageUtils.flagDisabledComponents;
 import static io.github.muntashirakon.AppManager.utils.PackageUtils.flagMatchUninstalled;
 import static io.github.muntashirakon.AppManager.utils.PackageUtils.flagSigningInfo;
+import static io.github.muntashirakon.AppManager.utils.PackageUtils.flagSigningInfoApk;
 
 public class AppDetailsViewModel extends AndroidViewModel {
     private final PackageManager mPackageManager;
@@ -128,8 +131,8 @@ public class AppDetailsViewModel extends AndroidViewModel {
         });
         if (receiver != null) getApplication().unregisterReceiver(receiver);
         receiver = null;
-        IOUtils.closeQuietly(apkFile);
-        executor.shutdown();
+        FileUtils.closeQuietly(apkFile);
+        executor.shutdownNow();
     }
 
     @UiThread
@@ -147,6 +150,7 @@ public class AppDetailsViewModel extends AndroidViewModel {
                 packageInfoLiveData.postValue(getPackageInfo());
             } catch (Throwable th) {
                 Log.e("ADVM", "Could not fetch package info.", th);
+                packageInfoLiveData.postValue(null);
             }
         });
         return packageInfoLiveData;
@@ -162,10 +166,13 @@ public class AppDetailsViewModel extends AndroidViewModel {
                 isExternalApk = false;
                 setPackageName(packageName);
                 if (getPackageInfo() == null) throw new ApkFile.ApkFileException("Package not installed.");
+                // TODO: 23/5/21 The app could be “data only”
                 apkFileKey = ApkFile.createInstance(getPackageInfo().applicationInfo);
                 apkFile = ApkFile.getInstance(apkFileKey);
+                packageInfoLiveData.postValue(getPackageInfo());
             } catch (Throwable th) {
                 Log.e("ADVM", "Could not fetch package info.", th);
+                packageInfoLiveData.postValue(null);
             }
         });
         return packageInfoLiveData;
@@ -394,24 +401,24 @@ public class AppDetailsViewModel extends AndroidViewModel {
 
     @WorkerThread
     @GuardedBy("blockerLocker")
-    public boolean setPermission(String permissionName, boolean isGranted) {
+    public boolean togglePermission(final AppDetailsPermissionItem permissionItem) {
         if (isExternalApk) return false;
-        int appOp = AppOpsManager.permissionToOpCode(permissionName);
+        int appOp = permissionItem.appOp;
         int uid = packageInfo.applicationInfo.uid;
-        if (isGranted) {
+        if (!permissionItem.isGranted) {
+            // If not granted, grant permission
             if (appOp != OP_NONE) {
                 try {
-                    mAppOpsService.setMode(appOp, uid, packageName, AppOpsManager.MODE_ALLOWED);
-                } catch (Exception e) {
+                    mAppOpsService.setMode(permissionItem.appOp, uid, packageName, AppOpsManager.MODE_ALLOWED);
+                } catch (Exception ignore) {
                     return false;
                 }
-            } else {
-                try {
-                    PermissionCompat.grantPermission(packageName, permissionName, userHandle);
-                } catch (RemoteException e) {
-                    e.printStackTrace();
-                    return false;
-                }
+            }
+            // Grant permission too
+            try {
+                PermissionCompat.grantPermission(packageName, permissionItem.name, userHandle);
+            } catch (RemoteException ignore) {
+                return false;
             }
         } else {
             if (appOp != OP_NONE) {
@@ -420,23 +427,41 @@ public class AppDetailsViewModel extends AndroidViewModel {
                 } catch (Exception e) {
                     return false;
                 }
-            } else {
-                try {
-                    PermissionCompat.revokePermission(packageName, permissionName, userHandle);
-                } catch (RemoteException e) {
-                    e.printStackTrace();
-                    return false;
-                }
             }
+            // Revoke permission too
+            try {
+                PermissionCompat.revokePermission(packageName, permissionItem.name, userHandle);
+            } catch (RemoteException e) {
+                e.printStackTrace();
+                return false;
+            }
+        }
+        // Check if review is required and disable it
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && (permissionItem.permissionFlags
+                & PermissionCompat.FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+            try {
+                PermissionCompat.updatePermissionFlags(permissionItem.name, packageName,
+                        PermissionCompat.FLAG_PERMISSION_REVIEW_REQUIRED, 0, PermissionCompat
+                                .getCheckAdjustPolicyFlagPermission(packageInfo.applicationInfo), userHandle);
+            } catch (RemoteException ignore) {
+                return false;
+            }
+        }
+        permissionItem.isGranted = !permissionItem.isGranted;
+        try {
+            // Get new flags
+            permissionItem.permissionFlags = PermissionCompat.getPermissionFlags(permissionItem.name, packageName,
+                    userHandle);
+        } catch (RemoteException ignore) {
         }
         executor.submit(() -> {
             synchronized (blockerLocker) {
                 waitForBlockerOrExit();
                 blocker.setMutable();
                 if (appOp != OP_NONE) {
-                    blocker.setAppOp(appOp, isGranted ? AppOpsManager.MODE_ALLOWED : AppOpsManager.MODE_IGNORED);
+                    blocker.setAppOp(appOp, permissionItem.isGranted ? AppOpsManager.MODE_ALLOWED : AppOpsManager.MODE_IGNORED);
                 } else {
-                    blocker.setPermission(permissionName, isGranted);
+                    blocker.setPermission(permissionItem.name, permissionItem.isGranted, permissionItem.permissionFlags);
                 }
                 blocker.commit();
                 blocker.setReadOnly();
@@ -451,16 +476,30 @@ public class AppDetailsViewModel extends AndroidViewModel {
     public boolean revokeDangerousPermissions() {
         if (isExternalApk) return false;
         AppDetailsPermissionItem permissionItem;
-        List<String> revokedPermissions = new ArrayList<>();
+        List<AppDetailsPermissionItem> revokedPermissions = new ArrayList<>();
         boolean isSuccessful = true;
         for (int i = 0; i < usesPermissionItems.size(); ++i) {
             permissionItem = usesPermissionItems.get(i);
             if (permissionItem.isDangerous && permissionItem.isGranted) {
                 try {
                     PermissionCompat.revokePermission(packageName, permissionItem.name, userHandle);
+                    // Check if review is required and disable it
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && (permissionItem.permissionFlags
+                            & PermissionCompat.FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+                        try {
+                            PermissionCompat.updatePermissionFlags(permissionItem.name, packageName,
+                                    PermissionCompat.FLAG_PERMISSION_REVIEW_REQUIRED, 0, PermissionCompat
+                                            .getCheckAdjustPolicyFlagPermission(packageInfo.applicationInfo), userHandle);
+                        } catch (RemoteException ignore) {
+                        }
+                    }
                     permissionItem.isGranted = false;
+                    try {
+                        permissionItem.permissionFlags = PermissionCompat.getPermissionFlags(permissionItem.name, packageName, userHandle);
+                    } catch (RemoteException ignore) {
+                    }
                     usesPermissionItems.set(i, permissionItem);
-                    revokedPermissions.add(permissionItem.name);
+                    revokedPermissions.add(permissionItem);
                 } catch (RemoteException e) {
                     e.printStackTrace();
                     isSuccessful = false;
@@ -473,8 +512,9 @@ public class AppDetailsViewModel extends AndroidViewModel {
             synchronized (blockerLocker) {
                 waitForBlockerOrExit();
                 blocker.setMutable();
-                for (String permName : revokedPermissions)
-                    blocker.setPermission(permName, false);
+                for (AppDetailsPermissionItem permItem : revokedPermissions) {
+                    blocker.setPermission(permItem.name, permItem.isGranted, permItem.permissionFlags);
+                }
                 blocker.commit();
                 blocker.setReadOnly();
                 blockerLocker.notifyAll();
@@ -483,13 +523,13 @@ public class AppDetailsViewModel extends AndroidViewModel {
         return isSuccessful;
     }
 
-    private AppOpsService mAppOpsService;
+    @NonNull
+    private final AppOpsService mAppOpsService = new AppOpsService();
 
     @WorkerThread
     @GuardedBy("blockerLocker")
     public boolean setAppOp(int op, int mode) {
         if (isExternalApk) return false;
-        if (mAppOpsService == null) mAppOpsService = new AppOpsService();
         try {
             // Set mode
             mAppOpsService.setMode(op, packageInfo.applicationInfo.uid, packageName, mode);
@@ -514,27 +554,25 @@ public class AppDetailsViewModel extends AndroidViewModel {
     @GuardedBy("blockerLocker")
     public boolean resetAppOps() {
         if (isExternalApk) return false;
-        if (mAppOpsService != null) {
-            try {
-                mAppOpsService.resetAllModes(userHandle, packageName);
-                executor.submit(this::loadAppOps);
-                // Save values to the blocking rules
-                executor.submit(() -> {
-                    synchronized (blockerLocker) {
-                        waitForBlockerOrExit();
-                        List<AppOpRule> appOpEntries = blocker.getAll(AppOpRule.class);
-                        blocker.setMutable();
-                        for (AppOpRule entry : appOpEntries)
-                            blocker.removeEntry(entry);
-                        blocker.commit();
-                        blocker.setReadOnly();
-                        blockerLocker.notifyAll();
-                    }
-                });
-                return true;
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+        try {
+            mAppOpsService.resetAllModes(userHandle, packageName);
+            executor.submit(this::loadAppOps);
+            // Save values to the blocking rules
+            executor.submit(() -> {
+                synchronized (blockerLocker) {
+                    waitForBlockerOrExit();
+                    List<AppOpRule> appOpEntries = blocker.getAll(AppOpRule.class);
+                    blocker.setMutable();
+                    for (AppOpRule entry : appOpEntries)
+                        blocker.removeEntry(entry);
+                    blocker.commit();
+                    blocker.setReadOnly();
+                    blockerLocker.notifyAll();
+                }
+            });
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
         }
         return false;
     }
@@ -548,7 +586,6 @@ public class AppDetailsViewModel extends AndroidViewModel {
         String permName;
         final List<Integer> opItems = new ArrayList<>();
         boolean isSuccessful = true;
-        if (mAppOpsService == null) mAppOpsService = new AppOpsService();
         for (int i = 0; i < appOpItems.size(); ++i) {
             appDetailsItem = appOpItems.get(i);
             opEntry = (OpEntry) appDetailsItem.vanillaItem;
@@ -717,7 +754,7 @@ public class AppDetailsViewModel extends AndroidViewModel {
     @GuardedBy("blockerLocker")
     public void setIsPackageChanged() {
         setPackageInfo(true);
-        if (isExternalApk) return;
+        if (isExternalApk || executor.isShutdown() || executor.isTerminated()) return;
         executor.submit(() -> {
             synchronized (blockerLocker) {
                 try {
@@ -764,7 +801,6 @@ public class AppDetailsViewModel extends AndroidViewModel {
         executor.submit(this::loadProviders);
     }
 
-    @SuppressWarnings("deprecation")
     @SuppressLint("WrongConstant")
     @WorkerThread
     public void setPackageInfo(boolean reload) {
@@ -778,12 +814,14 @@ public class AppDetailsViewModel extends AndroidViewModel {
         try {
             try {
                 installedPackageInfo = PackageManagerCompat.getPackageInfo(packageName,
-                        PackageManager.GET_PERMISSIONS | PackageManager.GET_ACTIVITIES
-                                | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS
-                                | PackageManager.GET_SERVICES | PackageManager.GET_URI_PERMISSION_PATTERNS
-                                | flagDisabledComponents | flagSigningInfo | flagMatchUninstalled
-                                | PackageManager.GET_CONFIGURATIONS | PackageManager.GET_SHARED_LIBRARY_FILES,
+                        PackageManager.GET_PERMISSIONS | PackageManager.GET_ACTIVITIES | flagDisabledComponents
+                                | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS | flagMatchUninstalled
+                                | PackageManager.GET_SERVICES | PackageManager.GET_CONFIGURATIONS | flagSigningInfo
+                                | PackageManager.GET_SHARED_LIBRARY_FILES,
                         userHandle);
+                if (!new File(installedPackageInfo.applicationInfo.publicSourceDir).exists()) {
+                    throw new ApkFile.ApkFileException("App not installed. It only has data.");
+                }
             } catch (Throwable e) {
                 installedPackageInfo = null;
                 e.printStackTrace();
@@ -794,9 +832,8 @@ public class AppDetailsViewModel extends AndroidViewModel {
             if (isExternalApk) {
                 packageInfo = mPackageManager.getPackageArchiveInfo(apkPath, PackageManager.GET_PERMISSIONS
                         | PackageManager.GET_ACTIVITIES | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS
-                        | PackageManager.GET_SERVICES | PackageManager.GET_URI_PERMISSION_PATTERNS
-                        | flagDisabledComponents | PackageManager.GET_SIGNATURES | PackageManager.GET_CONFIGURATIONS
-                        | PackageManager.GET_SHARED_LIBRARY_FILES);
+                        | PackageManager.GET_SERVICES | flagDisabledComponents | flagSigningInfoApk
+                        | PackageManager.GET_CONFIGURATIONS | PackageManager.GET_SHARED_LIBRARY_FILES);
                 if (packageInfo == null) {
                     throw new PackageManager.NameNotFoundException("Package cannot be parsed");
                 }
@@ -844,6 +881,26 @@ public class AppDetailsViewModel extends AndroidViewModel {
     }
 
     @NonNull
+    public LiveData<UserInfo> getUserInfo() {
+        MutableLiveData<UserInfo> userInfoMutableLiveData = new MutableLiveData<>();
+        executor.submit(() -> {
+            final List<UserInfo> userInfoList;
+            if (!isExternalApk && AppPref.isRootOrAdbEnabled()) {
+                userInfoList = Users.getUsers();
+            } else userInfoList = null;
+            if (userInfoList != null && userInfoList.size() > 1) {
+                for (UserInfo userInfo : userInfoList) {
+                    if (userInfo.id == userHandle) {
+                        userInfoMutableLiveData.postValue(userInfo);
+                        break;
+                    }
+                }
+            }
+        });
+        return userInfoMutableLiveData;
+    }
+
+    @NonNull
     private final MutableLiveData<List<AppDetailsItem>> appInfo = new MutableLiveData<>();
 
     @UiThread
@@ -856,11 +913,12 @@ public class AppDetailsViewModel extends AndroidViewModel {
 
     @WorkerThread
     private void loadAppInfo() {
-        AppDetailsItem appDetailsItem = new AppDetailsItem(packageInfo);
-        if (getPackageInfo() == null) {
+        getPackageInfo();
+        if (packageInfo == null) {
             appInfo.postValue(null);
             return;
         }
+        AppDetailsItem appDetailsItem = new AppDetailsItem(packageInfo);
         appDetailsItem.name = packageName;
         List<AppDetailsItem> appDetailsItems = Collections.singletonList(appDetailsItem);
         appInfo.postValue(appDetailsItems);
@@ -1062,7 +1120,6 @@ public class AppDetailsViewModel extends AndroidViewModel {
         }
         if (!isExternalApk && (AppPref.isRootOrAdbEnabled()
                 || PermissionUtils.hasAppOpsPermission(getApplication()))) {
-            if (mAppOpsService == null) mAppOpsService = new AppOpsService();
             try {
                 int uid = packageInfo.applicationInfo.uid;
                 List<OpEntry> opEntries = new ArrayList<>(AppOpsUtils.getChangedAppOps(mAppOpsService, packageName, uid));
@@ -1071,7 +1128,10 @@ public class AppDetailsViewModel extends AndroidViewModel {
                 List<String> permissions = getRawPermissions();
                 for (String permission : permissions) {
                     int op = AppOpsManager.permissionToOpCode(permission);
-                    if (op == OP_NONE) continue;
+                    if (op == OP_NONE || op >= AppOpsManager._NUM_OP) {
+                        // Invalid/unsupported app operation
+                        continue;
+                    }
                     opEntry = new OpEntry(op, mAppOpsService.checkOperation(op, uid, packageName), 0,
                             0, 0, 0, null);
                     if (!opEntries.contains(opEntry)) opEntries.add(opEntry);
@@ -1079,6 +1139,10 @@ public class AppDetailsViewModel extends AndroidViewModel {
                 // Include defaults ie. app ops without any associated permissions if requested
                 if ((boolean) AppPref.get(AppPref.PrefKey.PREF_APP_OP_SHOW_DEFAULT_BOOL)) {
                     for (int op : AppOpsManager.sOpsWithNoPerm) {
+                        if (op >= AppOpsManager._NUM_OP) {
+                            // Unsupported app operation
+                            continue;
+                        }
                         opEntry = new OpEntry(op, AppOpsManager.opToDefaultMode(op), 0,
                                 0, 0, 0, null);
                         if (!opEntries.contains(opEntry)) opEntries.add(opEntry);
@@ -1140,13 +1204,12 @@ public class AppDetailsViewModel extends AndroidViewModel {
     }
 
     @WorkerThread
-    public void setUsesPermission(String permissionName, boolean isGranted) {
+    public void setUsesPermission(AppDetailsPermissionItem appDetailsPermissionItem) {
         AppDetailsPermissionItem permissionItem;
         for (int i = 0; i < usesPermissionItems.size(); ++i) {
             permissionItem = usesPermissionItems.get(i);
-            if (permissionItem.name.equals(permissionName)) {
-                permissionItem.isGranted = isGranted;
-                usesPermissionItems.set(i, permissionItem);
+            if (permissionItem.name.equals(appDetailsPermissionItem.name)) {
+                usesPermissionItems.set(i, appDetailsPermissionItem);
                 break;
             }
         }
@@ -1164,16 +1227,31 @@ public class AppDetailsViewModel extends AndroidViewModel {
             usesPermissions.postValue(appDetailsItems);
             return;
         }
+        boolean isRootOrAdbEnabled = AppPref.isRootOrAdbEnabled();
         for (int i = 0; i < packageInfo.requestedPermissions.length; ++i) {
             try {
-                PermissionInfo permissionInfo = mPackageManager.getPermissionInfo(
-                        packageInfo.requestedPermissions[i], PackageManager.GET_META_DATA);
+                PermissionInfo permissionInfo = mPackageManager.getPermissionInfo(packageInfo.requestedPermissions[i],
+                        PackageManager.GET_META_DATA);
                 AppDetailsPermissionItem appDetailsItem = new AppDetailsPermissionItem(permissionInfo);
                 appDetailsItem.name = packageInfo.requestedPermissions[i];
                 appDetailsItem.flags = packageInfo.requestedPermissionsFlags[i];
                 appDetailsItem.isDangerous = PermissionInfoCompat.getProtection(permissionInfo) == PermissionInfo.PROTECTION_DANGEROUS;
                 appDetailsItem.isGranted = (appDetailsItem.flags & PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0;
                 appDetailsItem.appOp = AppOpsManager.permissionToOpCode(appDetailsItem.name);
+                if (isRootOrAdbEnabled) {
+                    try {
+                        appDetailsItem.permissionFlags = PermissionCompat.getPermissionFlags(appDetailsItem.name,
+                                packageName, userHandle);
+                        // Check if review required is set (for apps targeting API 23 or less)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && (appDetailsItem.permissionFlags
+                                & PermissionCompat.FLAG_PERMISSION_REVIEW_REQUIRED) != 0) {
+                            // Permission is not granted
+                            appDetailsItem.isGranted = false;
+                        }
+                    } catch (RemoteException e) {
+                        e.printStackTrace();
+                    }
+                }
                 if (!isExternalApk && !appDetailsItem.isGranted && appDetailsItem.appOp != OP_NONE) {
                     // Override isGranted only if the original permission isn't granted
                     try {

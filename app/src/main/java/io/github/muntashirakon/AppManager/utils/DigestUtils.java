@@ -3,7 +3,6 @@
 package io.github.muntashirakon.AppManager.utils;
 
 import android.annotation.TargetApi;
-import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Pair;
 
@@ -26,6 +25,8 @@ import java.util.zip.CRC32;
 import java.util.zip.CheckedInputStream;
 
 import aosp.libcore.util.HexEncoding;
+import io.github.muntashirakon.io.IoUtils;
+import io.github.muntashirakon.io.Path;
 import io.github.muntashirakon.io.ProxyInputStream;
 
 public class DigestUtils {
@@ -59,7 +60,26 @@ public class DigestUtils {
         for (File file : allFiles) {
             try (InputStream fileInputStream = new ProxyInputStream(file)) {
                 hashes.add(DigestUtils.getHexDigest(algo, fileInputStream));
-            } catch (IOException | RemoteException e) {
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        if (hashes.size() == 0) return HexEncoding.encodeToString(new byte[0], false /* lowercase */);
+        if (hashes.size() == 1) return hashes.get(0);
+        String fullString = TextUtils.join("", hashes);
+        return getHexDigest(algo, fullString.getBytes());
+    }
+
+    @WorkerThread
+    @NonNull
+    public static String getHexDigest(@Algorithm String algo, @NonNull Path path) {
+        List<Path> allFiles = new ArrayList<>();
+        gatherFiles(allFiles, path);
+        List<String> hashes = new ArrayList<>(allFiles.size());
+        for (Path file : allFiles) {
+            try (InputStream fileInputStream = file.openInputStream()) {
+                hashes.add(DigestUtils.getHexDigest(algo, fileInputStream));
+            } catch (IOException e) {
                 e.printStackTrace();
             }
         }
@@ -79,9 +99,7 @@ public class DigestUtils {
     @NonNull
     public static byte[] getDigest(@Algorithm String algo, @NonNull byte[] bytes) {
         if (CRC32.equals(algo)) {
-            java.util.zip.CRC32 crc32 = new CRC32();
-            crc32.update(bytes);
-            return longToBytes(crc32.getValue());
+            return longToBytes(calculateCrc32(bytes));
         }
         try {
             return MessageDigest.getInstance(algo).digest(bytes);
@@ -95,20 +113,17 @@ public class DigestUtils {
     @NonNull
     public static byte[] getDigest(@Algorithm String algo, @NonNull InputStream stream) {
         if (CRC32.equals(algo)) {
-            java.util.zip.CRC32 crc32 = new CRC32();
-            byte[] buffer = new byte[IOUtils.DEFAULT_BUFFER_SIZE];
-            try (CheckedInputStream cis = new CheckedInputStream(stream, crc32)) {
-                //noinspection StatementWithEmptyBody
-                while (cis.read(buffer) >= 0) {
-                }
-            } catch (IOException ignore) {
+            try {
+                return longToBytes(calculateCrc32(stream));
+            } catch (IOException e) {
+                e.printStackTrace();
+                return new byte[0];
             }
-            return longToBytes(crc32.getValue());
         }
         try {
             MessageDigest messageDigest = MessageDigest.getInstance(algo);
             try (DigestInputStream digestInputStream = new DigestInputStream(stream, messageDigest)) {
-                byte[] buffer = new byte[IOUtils.DEFAULT_BUFFER_SIZE];
+                byte[] buffer = new byte[IoUtils.DEFAULT_BUFFER_SIZE];
                 //noinspection StatementWithEmptyBody
                 while (digestInputStream.read(buffer) != -1) {
                 }
@@ -119,6 +134,30 @@ public class DigestUtils {
             e.printStackTrace();
             return new byte[0];
         }
+    }
+
+    @WorkerThread
+    public static long calculateCrc32(File file) throws IOException {
+        return calculateCrc32(new ProxyInputStream(file));
+    }
+
+    @AnyThread
+    public static long calculateCrc32(byte[] bytes) {
+        CRC32 crc32 = new CRC32();
+        crc32.update(bytes);
+        return crc32.getValue();
+    }
+
+    @AnyThread
+    public static long calculateCrc32(InputStream stream) throws IOException {
+        CRC32 crc32 = new CRC32();
+        byte[] buffer = new byte[IoUtils.DEFAULT_BUFFER_SIZE];
+        try (CheckedInputStream cis = new CheckedInputStream(stream, crc32)) {
+            //noinspection StatementWithEmptyBody
+            while (cis.read(buffer) >= 0) {
+            }
+        }
+        return crc32.getValue();
     }
 
     @WorkerThread
@@ -164,6 +203,21 @@ public class DigestUtils {
                 return;
             }
             for (File child : children) {
+                gatherFiles(files, child);
+            }
+        } else if (source.isFile()) {
+            // Not directory, add it
+            files.add(source);
+        } // else we don't support other type of files
+    }
+
+    static void gatherFiles(@NonNull List<Path> files, @NonNull Path source) {
+        if (source.isDirectory()) {
+            Path[] children = source.listFiles();
+            if (children.length == 0) {
+                return;
+            }
+            for (Path child : children) {
                 gatherFiles(files, child);
             }
         } else if (source.isFile()) {

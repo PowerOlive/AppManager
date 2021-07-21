@@ -4,7 +4,6 @@ package io.github.muntashirakon.AppManager.details;
 
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
-import android.content.pm.UserInfo;
 import android.content.res.TypedArray;
 import android.net.Uri;
 import android.os.Bundle;
@@ -23,14 +22,11 @@ import androidx.viewpager.widget.ViewPager;
 
 import com.google.android.material.tabs.TabLayout;
 
-import java.util.List;
-
 import io.github.muntashirakon.AppManager.BaseActivity;
 import io.github.muntashirakon.AppManager.R;
 import io.github.muntashirakon.AppManager.details.info.AppInfoFragment;
 import io.github.muntashirakon.AppManager.logs.Log;
 import io.github.muntashirakon.AppManager.users.Users;
-import io.github.muntashirakon.AppManager.utils.AppPref;
 import io.github.muntashirakon.AppManager.utils.UIUtils;
 
 public class AppDetailsActivity extends BaseActivity {
@@ -54,7 +50,7 @@ public class AppDetailsActivity extends BaseActivity {
         final String packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME);
         final Uri apkUri = intent.getData();
         final String apkType = intent.getType();
-        final int userHandle = intent.getIntExtra(EXTRA_USER_HANDLE, Users.getCurrentUserHandle());
+        final int userHandle = intent.getIntExtra(EXTRA_USER_HANDLE, Users.myUserId());
         model.setUserHandle(userHandle);
         // Initialize tabs
         mTabTitleIds = getResources().obtainTypedArray(R.array.TAB_TITLES);
@@ -68,7 +64,7 @@ public class AppDetailsActivity extends BaseActivity {
         ActionBar actionBar = getSupportActionBar();
         if (actionBar != null) {
             actionBar.setDisplayShowCustomEnabled(true);
-            searchView = UIUtils.setupSearchView(this, actionBar, null);
+            searchView = UIUtils.setupSearchView(actionBar, null);
         }
         FragmentManager fragmentManager = getSupportFragmentManager();
         viewPager = findViewById(R.id.pager);
@@ -96,29 +92,12 @@ public class AppDetailsActivity extends BaseActivity {
                     // Load tabs for the first time
                     for (int i = 0; i < mTabTitleIds.length(); ++i) model.load(i);
                     // Set title
-                    ApplicationInfo applicationInfo = model.getPackageInfo().applicationInfo;
+                    ApplicationInfo applicationInfo = packageInfo.applicationInfo;
                     // Set title as the package label
                     setTitle(applicationInfo.loadLabel(getPackageManager()));
-                    new Thread(() -> {
-                        // FIXME: 14/5/21 Replace with ViewModel
-                        final List<UserInfo> userInfoList;
-                        if (!model.getIsExternalApk() && AppPref.isRootOrAdbEnabled()) {
-                            userInfoList = Users.getUsers();
-                        } else userInfoList = null;
-                        runOnUiThread(() -> {
-                            if (isDestroyed()) return;
-                            // Set subtitle as the user name if more than one user exists
-                            if (userInfoList != null && userInfoList.size() > 1) {
-                                for (UserInfo userInfo : userInfoList) {
-                                    if (userInfo.id == userHandle) {
-                                        getSupportActionBar().setSubtitle(getString(R.string.user_profile_with_id,
-                                                userInfo.name, userInfo.id));
-                                        break;
-                                    }
-                                }
-                            }
-                        });
-                    }).start();
+                    // Set subtitle as the user name if more than one user exists
+                    model.getUserInfo().observe(this, userInfo -> getSupportActionBar()
+                            .setSubtitle(getString(R.string.user_profile_with_id, userInfo.name, userInfo.id)));
                 });
         // Check for the existence of package
         model.getIsPackageExistLiveData().observe(this, isPackageExist -> {

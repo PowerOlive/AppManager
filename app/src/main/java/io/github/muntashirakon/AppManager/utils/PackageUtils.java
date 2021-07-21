@@ -2,6 +2,7 @@
 
 package io.github.muntashirakon.AppManager.utils;
 
+import android.annotation.SuppressLint;
 import android.annotation.UserIdInt;
 import android.app.usage.IStorageStatsManager;
 import android.app.usage.StorageStats;
@@ -24,18 +25,20 @@ import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 import android.util.Pair;
 
-import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 import androidx.core.content.ContextCompat;
 
 import com.android.apksig.ApkVerifier;
+import com.android.apksig.apk.ApkFormatException;
 import com.android.internal.util.TextUtils;
 
 import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateExpiredException;
@@ -54,6 +57,7 @@ import java.util.ListIterator;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -63,8 +67,9 @@ import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.R;
 import io.github.muntashirakon.AppManager.appops.AppOpsManager;
 import io.github.muntashirakon.AppManager.appops.AppOpsService;
-import io.github.muntashirakon.AppManager.backup.MetadataManager;
+import io.github.muntashirakon.AppManager.backup.BackupUtils;
 import io.github.muntashirakon.AppManager.db.entity.App;
+import io.github.muntashirakon.AppManager.db.entity.Backup;
 import io.github.muntashirakon.AppManager.ipc.IPCUtils;
 import io.github.muntashirakon.AppManager.ipc.ProxyBinder;
 import io.github.muntashirakon.AppManager.ipc.ps.ProcessEntry;
@@ -89,9 +94,12 @@ import static io.github.muntashirakon.AppManager.utils.UIUtils.getPrimaryText;
 import static io.github.muntashirakon.AppManager.utils.UIUtils.getTitleText;
 
 public final class PackageUtils {
+    public static final String TAG = PackageUtils.class.getSimpleName();
+
     public static final File PACKAGE_STAGING_DIRECTORY = new File("/data/local/tmp");
 
     public static final int flagSigningInfo;
+    public static final int flagSigningInfoApk;
     public static final int flagDisabledComponents;
     public static final int flagMatchUninstalled;
 
@@ -101,6 +109,12 @@ public final class PackageUtils {
         } else {
             //noinspection deprecation
             flagSigningInfo = PackageManager.GET_SIGNATURES;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            flagSigningInfoApk = PackageManager.GET_SIGNING_CERTIFICATES;
+        } else {
+            //noinspection deprecation
+            flagSigningInfoApk = PackageManager.GET_SIGNATURES;
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             flagDisabledComponents = PackageManager.MATCH_DISABLED_COMPONENTS;
@@ -123,7 +137,7 @@ public final class PackageUtils {
     @NonNull
     public static ArrayList<UserPackagePair> getUserPackagePairs(@NonNull List<ApplicationItem> applicationItems) {
         ArrayList<UserPackagePair> userPackagePairList = new ArrayList<>();
-        int currentUser = Users.getCurrentUserHandle();
+        int currentUser = Users.myUserId();
         for (ApplicationItem item : applicationItems) {
             if (item.userHandles != null) {
                 for (int userHandle : item.userHandles)
@@ -135,25 +149,30 @@ public final class PackageUtils {
         return userPackagePairList;
     }
 
-    @GuardedBy("metadataLock")
-    private static final Object metadataLock = new Object();
-
+    /**
+     * List all applications stored in App Manager database as well as from the system.
+     *
+     * @param executor    Retrieve applications from the system using the given thread instead of the current thread.
+     * @param loadBackups Load/List backup metadata
+     * @return List of applications, which could be the cached version if the executor parameter is {@code null}.
+     */
     @WorkerThread
-    @GuardedBy("metadataLock")
     @NonNull
     public static List<ApplicationItem> getInstalledOrBackedUpApplicationsFromDb(@NonNull Context context,
-                                                                                 @Nullable HashMap<String, MetadataManager.Metadata> backupMetadata) {
+                                                                                 @Nullable ExecutorService executor,
+                                                                                 boolean loadBackups) {
         List<ApplicationItem> applicationItems = new ArrayList<>();
         List<App> apps = AppManager.getDb().appDao().getAll();
-        if (apps.size() == 0) {
+        if (apps.size() == 0 || executor == null) {
             // Load app list for the first time
-            Log.d("PackageUtils", "Loading apps for the first time.");
-            updateInstalledOrBackedUpApplications(context, backupMetadata);
+            Log.d(TAG, "Loading apps for the first time.");
+            updateInstalledOrBackedUpApplications(context, loadBackups);
             apps = AppManager.getDb().appDao().getAll();
         } else {
             // Update list of apps safely in the background
-            new Thread(() -> updateInstalledOrBackedUpApplications(context, backupMetadata)).start();
+            executor.submit(() -> updateInstalledOrBackedUpApplications(context, loadBackups));
         }
+        HashMap<String, Backup> backups = BackupUtils.getAllLatestBackupMetadataFromDb();
         // Get application items from apps
         for (App app : apps) {
             ApplicationItem item = new ApplicationItem();
@@ -181,12 +200,9 @@ public final class PackageUtils {
                     item.isInstalled = false;
                 }
             }
-            if (backupMetadata != null) {
-                MetadataManager.Metadata metadata = backupMetadata.get(item.packageName);
-                if (metadata != null) {
-                    item.metadata = metadata;
-                    backupMetadata.remove(item.packageName);
-                }
+            if (backups.containsKey(item.packageName)) {
+                item.backup = backups.get(item.packageName);
+                backups.remove(item.packageName);
             }
             item.flags = app.flags;
             item.uid = app.uid;
@@ -208,58 +224,72 @@ public final class PackageUtils {
             item.lastActionTime = app.lastActionTime;
             applicationItems.add(item);
         }
-        if (backupMetadata != null) {
-            synchronized (metadataLock) {
-                // Add rest of the backup items, i.e., items that aren't installed
-                for (MetadataManager.Metadata metadata : backupMetadata.values()) {
-                    ApplicationItem item = new ApplicationItem();
-                    item.packageName = metadata.packageName;
-                    item.metadata = metadata;
-                    item.versionName = item.metadata.versionName;
-                    item.versionCode = item.metadata.versionCode;
-                    item.label = item.metadata.label;
-                    item.firstInstallTime = item.metadata.backupTime;
-                    item.lastUpdateTime = item.metadata.backupTime;
-                    item.isUser = !item.metadata.isSystem;
-                    item.isDisabled = false;
-                    item.isInstalled = false;
-                    item.hasSplits = metadata.isSplitApk;
-                    applicationItems.add(item);
-                }
-            }
+        // Add rest of the backups
+        for (String packageName : backups.keySet()) {
+            Backup backup = backups.get(packageName);
+            if (backup == null) continue;
+            ApplicationItem item = new ApplicationItem();
+            item.packageName = backup.packageName;
+            item.backup = backup;
+            item.versionName = backup.versionName;
+            item.versionCode = backup.versionCode;
+            item.label = backup.label;
+            item.firstInstallTime = backup.backupTime;
+            item.lastUpdateTime = backup.backupTime;
+            item.isUser = !backup.isSystem;
+            item.isDisabled = false;
+            item.isInstalled = false;
+            item.hasSplits = backup.hasSplits;
+            applicationItems.add(item);
         }
         return applicationItems;
     }
 
-    @GuardedBy("metadataLock")
-    private static void updateInstalledOrBackedUpApplications(@NonNull Context context,
-                                                              @Nullable HashMap<String, MetadataManager.Metadata> backupMetadata) {
+    @WorkerThread
+    public static void updateInstalledOrBackedUpApplications(@NonNull Context context, boolean loadBackups) {
+        HashMap<String, Backup> backups;
+        if (loadBackups) {
+            try {
+                backups = BackupUtils.storeAllAndGetLatestBackupMetadata();
+            } catch (IOException e) {
+                e.printStackTrace();
+                // Backups variable should always be non-null
+                backups = new HashMap<>(0);
+            }
+        } else {
+            backups = BackupUtils.getAllLatestBackupMetadataFromDb();
+        }
+        // Interrupt thread on request
+        if (Thread.currentThread().isInterrupted()) return;
+
         List<App> newApps = new ArrayList<>();
         List<Integer> newAppHashes = new ArrayList<>();
-        int[] userHandles = Users.getUsersHandles();
+        int[] userHandles = Users.getUsersIds();
         for (int userHandle : userHandles) {
+            // Interrupt thread on request
+            if (Thread.currentThread().isInterrupted()) return;
+
             List<PackageInfo> packageInfoList;
             try {
                 packageInfoList = PackageManagerCompat.getInstalledPackages(flagSigningInfo
                         | PackageManager.GET_ACTIVITIES | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS
                         | PackageManager.GET_SERVICES | flagDisabledComponents | flagMatchUninstalled, userHandle);
             } catch (Exception e) {
-                Log.e("PackageUtils", "Could not retrieve package info list for user " + userHandle, e);
+                Log.e(TAG, "Could not retrieve package info list for user " + userHandle, e);
                 continue;
             }
             ApplicationInfo applicationInfo;
-            MetadataManager.Metadata metadata;
+            Backup backup;
 
             for (PackageInfo packageInfo : packageInfoList) {
+                // Interrupt thread on request
+                if (Thread.currentThread().isInterrupted()) return;
+
                 applicationInfo = packageInfo.applicationInfo;
                 App app = App.fromPackageInfo(context, packageInfo);
-                if (backupMetadata != null) {
-                    synchronized (metadataLock) {
-                        metadata = backupMetadata.get(applicationInfo.packageName);
-                        if (metadata != null) {
-                            backupMetadata.remove(applicationInfo.packageName);
-                        }
-                    }
+                backup = backups.get(applicationInfo.packageName);
+                if (backup != null) {
+                    backups.remove(applicationInfo.packageName);
                 }
                 try (ComponentsBlocker cb = ComponentsBlocker.getInstance(app.packageName, app.userId, true)) {
                     app.rulesCount = cb.entryCount();
@@ -268,25 +298,27 @@ public final class PackageUtils {
                 newAppHashes.add(app.getHashCode());
             }
         }
-        if (backupMetadata != null) {
-            synchronized (metadataLock) {
-                // Add rest of the backup items, i.e., items that aren't installed
-                for (MetadataManager.Metadata metadata : backupMetadata.values()) {
-                    if (metadata == null) continue;
-                    App app = App.fromBackupMetadata(metadata);
-                    try (ComponentsBlocker cb = ComponentsBlocker.getInstance(app.packageName, app.userId, true)) {
-                        app.rulesCount = cb.entryCount();
-                    }
-                    newApps.add(app);
-                    newAppHashes.add(app.getHashCode());
-                }
+        // Add rest of the backup items, i.e., items that aren't installed
+        for (Backup backup : backups.values()) {
+            // Interrupt thread on request
+            if (Thread.currentThread().isInterrupted()) return;
+
+            if (backup == null) continue;
+            App app = App.fromBackup(backup);
+            try (ComponentsBlocker cb = ComponentsBlocker.getInstance(app.packageName, app.userId, true)) {
+                app.rulesCount = cb.entryCount();
             }
+            newApps.add(app);
+            newAppHashes.add(app.getHashCode());
         }
         // Add new and delete old items
         List<App> oldApps = AppManager.getDb().appDao().getAll();
         List<App> updatedApps = new ArrayList<>();
         ListIterator<App> iterator = oldApps.listIterator();
         while (iterator.hasNext()) {
+            // Interrupt thread on request
+            if (Thread.currentThread().isInterrupted()) return;
+
             App oldApp = iterator.next();
             int index = newApps.indexOf(oldApp);
             if (index != -1) {
@@ -334,6 +366,7 @@ public final class PackageUtils {
         return packages.toArray(new String[0]);
     }
 
+    @WorkerThread
     @Nullable
     public static PackageSizeInfo getPackageSizeInfo(Context context, String packageName, int userHandle, UUID storageUuid) {
         AtomicReference<PackageSizeInfo> packageSizeInfo = new AtomicReference<>();
@@ -353,7 +386,7 @@ public final class PackageUtils {
                 });
                 waitForStats.await(5, TimeUnit.SECONDS);
             } catch (RemoteException | InterruptedException e) {
-                Log.e("PackageUtils", e);
+                Log.e(TAG, e);
             }
         } else {
             try {
@@ -364,9 +397,9 @@ public final class PackageUtils {
                 String uuidString = (String) getPackageSizeInfo.invoke(null, storageUuid);
                 StorageStats storageStats = storageStatsManager.queryStatsForPackage(uuidString, packageName,
                         userHandle, context.getPackageName());
-                packageSizeInfo.set(new PackageSizeInfo(packageName, storageStats));
+                packageSizeInfo.set(new PackageSizeInfo(packageName, storageStats, userHandle));
             } catch (NoSuchMethodException | IllegalAccessException | InvocationTargetException | RemoteException e) {
-                Log.e("PackageUtils", e);
+                Log.e(TAG, e);
             }
         }
         return packageSizeInfo.get();
@@ -376,10 +409,9 @@ public final class PackageUtils {
     public static HashMap<String, RuleType> collectComponentClassNames(String packageName, @UserIdInt int userHandle) {
         try {
             PackageInfo packageInfo = PackageManagerCompat.getPackageInfo(packageName,
-                    PackageManager.GET_ACTIVITIES | PackageManager.GET_RECEIVERS
-                            | PackageManager.GET_PROVIDERS | flagDisabledComponents
-                            | PackageManager.GET_URI_PERMISSION_PATTERNS
-                            | PackageManager.GET_SERVICES, userHandle);
+                    PackageManager.GET_ACTIVITIES | PackageManager.GET_RECEIVERS | PackageManager.GET_PROVIDERS
+                            | flagDisabledComponents | flagMatchUninstalled | PackageManager.GET_SERVICES,
+                    userHandle);
             return collectComponentClassNames(packageInfo);
         } catch (Throwable e) {
             e.printStackTrace();
@@ -475,7 +507,7 @@ public final class PackageUtils {
     @Nullable
     public static String[] getPermissionsForPackage(String packageName, @UserIdInt int userHandle)
             throws PackageManager.NameNotFoundException, RemoteException {
-        PackageInfo info = PackageManagerCompat.getPackageInfo(packageName, userHandle, PackageManager.GET_PERMISSIONS);
+        PackageInfo info = PackageManagerCompat.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS, userHandle);
         return info.requestedPermissions;
     }
 
@@ -570,7 +602,8 @@ public final class PackageUtils {
     @NonNull
     public static String getPackageLabel(@NonNull PackageManager pm, String packageName) {
         try {
-            ApplicationInfo applicationInfo = pm.getApplicationInfo(packageName, 0);
+            @SuppressLint("WrongConstant")
+            ApplicationInfo applicationInfo = pm.getApplicationInfo(packageName, flagMatchUninstalled);
             return pm.getApplicationLabel(applicationInfo).toString();
         } catch (PackageManager.NameNotFoundException ignore) {
         }
@@ -636,7 +669,8 @@ public final class PackageUtils {
     }
 
     @NonNull
-    public static String[] getDataDirs(@NonNull ApplicationInfo applicationInfo, boolean loadInternal, boolean loadExternal, boolean loadMediaObb) {
+    public static String[] getDataDirs(@NonNull ApplicationInfo applicationInfo, boolean loadInternal,
+                                       boolean loadExternal, boolean loadMediaObb) {
         ArrayList<String> dataDirs = new ArrayList<>();
         if (applicationInfo.dataDir == null) {
             throw new RuntimeException("Data directory cannot be empty.");
@@ -648,8 +682,10 @@ public final class PackageUtils {
                 dataDirs.add(applicationInfo.deviceProtectedDataDir);
             }
         }
+        int userHandle = Users.getUserId(applicationInfo.uid);
+        OsEnvironment.UserEnvironment ue = OsEnvironment.getUserEnvironment(userHandle);
         if (loadExternal) {
-            ProxyFile[] externalFiles = OsEnvironment.buildExternalStorageAppDataDirs(applicationInfo.packageName);
+            ProxyFile[] externalFiles = ue.buildExternalStorageAppDataDirs(applicationInfo.packageName);
             for (ProxyFile externalFile : externalFiles) {
                 if (externalFile != null && externalFile.exists())
                     dataDirs.add(externalFile.getAbsolutePath());
@@ -657,8 +693,8 @@ public final class PackageUtils {
         }
         if (loadMediaObb) {
             List<ProxyFile> externalFiles = new ArrayList<>();
-            externalFiles.addAll(Arrays.asList(OsEnvironment.buildExternalStorageAppMediaDirs(applicationInfo.packageName)));
-            externalFiles.addAll(Arrays.asList(OsEnvironment.buildExternalStorageAppObbDirs(applicationInfo.packageName)));
+            externalFiles.addAll(Arrays.asList(ue.buildExternalStorageAppMediaDirs(applicationInfo.packageName)));
+            externalFiles.addAll(Arrays.asList(ue.buildExternalStorageAppObbDirs(applicationInfo.packageName)));
             for (ProxyFile externalFile : externalFiles) {
                 if (externalFile != null && externalFile.exists())
                     dataDirs.add(externalFile.getAbsolutePath());
@@ -729,17 +765,55 @@ public final class PackageUtils {
         return appOpNames;
     }
 
+    @SuppressWarnings("deprecation")
     @Nullable
     public static Signature[] getSigningInfo(@NonNull PackageInfo packageInfo, boolean isExternal) {
-        if (!isExternal && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            SigningInfo signingInfo = packageInfo.signingInfo;
-            if (signingInfo == null) return null;
-            return signingInfo.hasMultipleSigners() ? signingInfo.getApkContentsSigners()
-                    : signingInfo.getSigningCertificateHistory();
-        } else {
-            //noinspection deprecation
-            return packageInfo.signatures;
+        if (!isExternal || Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                SigningInfo signingInfo = packageInfo.signingInfo;
+                if (signingInfo == null) {
+                    if (!isExternal) {
+                        return null;
+                    } // else Could be a false-negative
+                } else return signingInfo.hasMultipleSigners() ? signingInfo.getApkContentsSigners()
+                        : signingInfo.getSigningCertificateHistory();
+            }
         }
+        // Is an external app
+        if (packageInfo.signatures == null) {
+            // Could be a false-negative, try with apksig library
+            String apkPath = packageInfo.applicationInfo.publicSourceDir;
+            if (apkPath != null) {
+                Log.w(TAG, "getSigningInfo: Using fallback method");
+                return packageInfo.signatures = getSigningInfo(new File(apkPath));
+            }
+        }
+        return packageInfo.signatures;
+    }
+
+    @Nullable
+    public static Signature[] getSigningInfo(@NonNull File apkFile) {
+        ApkVerifier.Builder builder = new ApkVerifier.Builder(apkFile);
+        ApkVerifier apkVerifier = builder.build();
+        ApkVerifier.Result apkVerifierResult;
+        try {
+            apkVerifierResult = apkVerifier.verify();
+        } catch (IOException | ApkFormatException | NoSuchAlgorithmException e) {
+            Log.e(TAG, e);
+            return null;
+        }
+        // Get signer certificates
+        List<X509Certificate> certificates = apkVerifierResult.getSignerCertificates();
+        if (certificates == null || certificates.size() == 0) return null;
+        List<Signature> signatures = new ArrayList<>(certificates.size());
+        for (X509Certificate certificate : certificates) {
+            try {
+                signatures.add(new Signature(certificate.getEncoded()));
+            } catch (CertificateEncodingException e) {
+                return signatures.toArray(new Signature[0]);
+            }
+        }
+        return signatures.toArray(new Signature[0]);
     }
 
     @NonNull

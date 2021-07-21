@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
+<!-- SPDX-License-Identifier: GPL-3.0-or-later --><resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
     <string name="_lang_tag" translatable="false">fr</string>
     <string name="uninstall">Désinstaller</string>
     <string name="cache_size">Cache</string>
@@ -26,7 +25,6 @@
     <string name="sort_by_shared_user_id">Identifiant utilisateur partagé</string>
     <string name="no_feature">Aucune fonctionnalité</string>
     <string name="uses_feature">Utilise les fonctionnalités</string>
-    <string name="protection_level">Niveau de protection</string>
     <string name="group">Groupe</string>
     <string name="shared_libs">Bibliothèques partagées</string>
     <string name="declared_permission">Autorisations</string>
@@ -341,10 +339,6 @@
     <string name="block_unblock_trackers_description">Bloquer ou débloquer les composants de publicité et de suivi dans toutes les applications installées</string>
     <string name="clear_cache">Effacer le cache</string>
     <string name="pref_import_existing">Importer des règles existantes</string>
-    <string name="community_links">Salon d\'information : https://t.me/AppManagerChannel
-\nGroupe d\'entraide : https://t.me/AppManagerAndroid
-\nTwitter : https://twitter.com/AMUpdateChannel</string>
-    <string name="community">Communauté Télégram</string>
     <string name="source_code">Code source</string>
     <string name="update">Mettre à jour</string>
     <string name="install">Installer</string>
@@ -564,15 +558,20 @@
     <string name="word_wrap">Activer/Désactiver la coupure de mots</string>
     <string name="credits_message">Aux auteurs du
 \n- Projet Open Source Android
-\n- <a href="https://bitbucket.org/oF2pks/fdroid-applications-info">Info Apps_packages </a>
 \n- <a href="https://github.com/butzist/ActivityLauncher">Activity Launcher</a>
-\n- <a href="https://github.com/billthefarmer/editor">Éditeur</a>
+\n- <a href="https://bitbucket.org/oF2pks/fdroid-applications-info">Infos Apps_packages</a>
 \n- <a href="https://github.com/zhaobao/AppsMonitor">AppsMonitor</a>
-\n- <a href="https://github.com/tuyafeng/Watt">Watt</a>
 \n- <a href="https://github.com/8enet/AppOpsX">AppOpsX</a>
+\n- <a href="https://github.com/billthefarmer/editor">Editeur</a>
+\n- <a href="https://github.com/k3b/intent-intercept">Intent Intercept</a>
+\n- <a href="https://github.com/pluscubed/matlog">MatLog</a>
+\n- <a href="https://github.com/matrix-org/matrix-android-sdk">Matrix Android SDK</a>
+\n- <a href="https://github.com/jensstein/oandbackup">OAndBackup</a>
+\n- <a href="https://github.com/open-keychain/open-keychain">Open Keychain</a>
 \n- <a href="https://github.com/Aefyr/SAI">SAI</a>
 \n- <a href="https://github.com/RikkaApps/Shizuku">Shizuku</a>
-\nCrédit du logo original : <a href="https://github.com/Atrate">Atrate</a>. </string>
+\n- <a href="https://github.com/tuyafeng/Watt">Watt</a>
+\nCrédits logo original : <a href="https://github.com/Atrate">Atrate</a>. </string>
     <string name="credits">Crédits</string>
     <string name="third_party">Bibliothèques tierces et icônes</string>
     <string name="license">Licence</string>
@@ -615,7 +614,6 @@
     <string name="pref_global_blocking_enabled">Blocage instantané des composants</string>
     <string name="failed_to_disable_op">Impossible de désactiver l\'autorisation demandée</string>
     <string name="failed_to_enable_op">Impossible d\'activer l\'autorisation demandée</string>
-    <string name="gles_ver">Version OpenGL ES req.</string>
     <string name="ago">il y a</string>
     <string name="reject_time">Temps de re</string>
     <string name="accept_time">Temps d\'acceptation</string>
@@ -662,8 +660,6 @@
     <string name="cpu">CPU</string>
     <string name="users">Utilisateurs</string>
     <string name="languages">Langages</string>
-    <string name="unavailable">Indisponible</string>
-    <string name="available">Disponible</string>
     <string name="battery_capacity">Capacité</string>
     <string name="memory">Mémoire</string>
     <string name="gles_version">Version GL ES</string>
@@ -707,4 +703,5 @@
         <item quantity="one">Schéma de signature</item>
         <item quantity="other">Schémas de signature</item>
     </plurals>
+    <string name="orientation_sensor_landscape">Le paysage des capteurs</string>
 </resources>

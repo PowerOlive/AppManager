@@ -7,20 +7,19 @@ import android.content.pm.PackageItemInfo;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Drawable;
 import android.util.Pair;
+
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
-import aosp.libcore.util.EmptyArray;
-import io.github.muntashirakon.AppManager.backup.BackupManager;
-import io.github.muntashirakon.AppManager.backup.MetadataManager;
-import io.github.muntashirakon.AppManager.servermanager.PackageManagerCompat;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
-import io.github.muntashirakon.AppManager.utils.PackageUtils;
-import io.github.muntashirakon.io.ProxyFile;
-import io.github.muntashirakon.io.ProxyInputStream;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.Objects;
+
+import aosp.libcore.util.EmptyArray;
+import io.github.muntashirakon.AppManager.backup.BackupManager;
+import io.github.muntashirakon.AppManager.db.entity.Backup;
+import io.github.muntashirakon.AppManager.servermanager.PackageManagerCompat;
+import io.github.muntashirakon.AppManager.utils.PackageUtils;
+import io.github.muntashirakon.io.Path;
 
 /**
  * Stores an application info
@@ -38,7 +37,7 @@ public class ApplicationItem extends PackageItemInfo {
      * Backup info
      */
     @Nullable
-    public MetadataManager.Metadata metadata;
+    public Backup backup;
     /**
      * Application flags.
      * See {@link android.content.pm.ApplicationInfo#flags}
@@ -127,24 +126,20 @@ public class ApplicationItem extends PackageItemInfo {
     @WorkerThread
     @Override
     public Drawable loadIcon(PackageManager pm) {
-        try {
-            return IOUtils.getCachedIcon(packageName);
-        } catch (IOException ignore) {
-        }
         if (userHandles.length > 0) {
             try {
                 ApplicationInfo info = PackageManagerCompat.getApplicationInfo(packageName,
                         PackageUtils.flagMatchUninstalled, userHandles[0]);
-                return IOUtils.cacheIcon(packageName, info.loadIcon(pm));
+                return info.loadIcon(pm);
             } catch (Exception ignore) {
             }
         }
-        if (metadata != null) {
+        if (backup != null) {
             try {
-                ProxyFile iconFile = new ProxyFile(metadata.backupPath, BackupManager.ICON_FILE);
+                Path iconFile = backup.getBackupPath().findFile(BackupManager.ICON_FILE);
                 if (iconFile.exists()) {
-                    try (InputStream is = new ProxyInputStream(iconFile)) {
-                        return IOUtils.cacheIcon(packageName, is);
+                    try (InputStream is = iconFile.openInputStream()) {
+                        return Drawable.createFromStream(is, name);
                     }
                 }
             } catch (Throwable ignore) {

@@ -4,7 +4,6 @@ package io.github.muntashirakon.AppManager.sysconfig;
 
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
-import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -17,6 +16,12 @@ import android.widget.ImageView;
 import android.widget.SpinnerAdapter;
 import android.widget.TextView;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.widget.AppCompatSpinner;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
 import com.google.android.material.progressindicator.LinearProgressIndicator;
 
 import java.util.ArrayList;
@@ -24,17 +29,10 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.appcompat.widget.AppCompatSpinner;
-import androidx.core.content.ContextCompat;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
-import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.BaseActivity;
 import io.github.muntashirakon.AppManager.R;
-import io.github.muntashirakon.AppManager.types.IconLoaderThread;
-import io.github.muntashirakon.AppManager.types.RecyclerViewWithEmptyView;
+import io.github.muntashirakon.AppManager.imagecache.ImageLoader;
+import io.github.muntashirakon.widget.RecyclerViewWithEmptyView;
 import me.zhanghai.android.fastscroll.FastScrollerBuilder;
 
 public class SysConfigActivity extends BaseActivity {
@@ -44,11 +42,15 @@ public class SysConfigActivity extends BaseActivity {
     @SysConfigType
     private String type = SysConfigType.TYPE_GROUP;
 
+    private final ImageLoader imageLoader = new ImageLoader();
+
     @Override
     protected void onAuthenticated(@Nullable Bundle savedInstanceState) {
         setContentView(R.layout.activity_sys_config);
         setSupportActionBar(findViewById(R.id.toolbar));
         AppCompatSpinner spinner = findViewById(R.id.spinner);
+        // Make spinner the first item to focus on
+        spinner.requestFocus();
         RecyclerViewWithEmptyView recyclerView = findViewById(R.id.recycler_view);
         recyclerView.setEmptyView(findViewById(android.R.id.empty));
         progressIndicator = findViewById(R.id.progress_linear);
@@ -76,7 +78,7 @@ public class SysConfigActivity extends BaseActivity {
             }
         });
 
-        adapter = new SysConfigRecyclerAdapter();
+        adapter = new SysConfigRecyclerAdapter(this);
         recyclerView.setHasFixedSize(true);
         recyclerView.setLayoutManager(new LinearLayoutManager(this));
         recyclerView.setAdapter(adapter);
@@ -96,6 +98,12 @@ public class SysConfigActivity extends BaseActivity {
     }
 
     @Override
+    protected void onDestroy() {
+        imageLoader.close();
+        super.onDestroy();
+    }
+
+    @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
         if (item.getItemId() == android.R.id.home) {
             finish();
@@ -106,13 +114,12 @@ public class SysConfigActivity extends BaseActivity {
 
     public static class SysConfigRecyclerAdapter extends RecyclerView.Adapter<SysConfigRecyclerAdapter.ViewHolder> {
         private final List<SysConfigInfo> list = new ArrayList<>();
-        private final PackageManager pm = AppManager.getInstance().getPackageManager();
-        private final int mColorTransparent;
-        private final int mColorSemiTransparent;
+        private final SysConfigActivity activity;
+        private final PackageManager pm;
 
-        SysConfigRecyclerAdapter() {
-            mColorTransparent = Color.TRANSPARENT;
-            mColorSemiTransparent = ContextCompat.getColor(AppManager.getContext(), R.color.semi_transparent);
+        SysConfigRecyclerAdapter(SysConfigActivity activity) {
+            this.activity = activity;
+            pm = activity.getPackageManager();
         }
 
         @NonNull
@@ -130,10 +137,9 @@ public class SysConfigActivity extends BaseActivity {
 
         @Override
         public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-            if (holder.iconLoader != null) holder.iconLoader.interrupt();
             holder.icon.setImageDrawable(null);
 
-            holder.itemView.setBackgroundColor(position % 2 == 0 ? mColorSemiTransparent : mColorTransparent);
+            holder.itemView.setBackgroundResource(position % 2 == 0 ? R.drawable.item_semi_transparent : R.drawable.item_transparent);
 
             SysConfigInfo info = list.get(position);
             if (info.isPackage) {
@@ -144,13 +150,11 @@ public class SysConfigActivity extends BaseActivity {
                     holder.packageName.setVisibility(View.VISIBLE);
                     holder.packageName.setText(info.name);
                     // Load icon
-                    holder.iconLoader = new IconLoaderThread(holder.icon, applicationInfo);
-                    holder.iconLoader.start();
+                    activity.imageLoader.displayImage(applicationInfo.packageName, applicationInfo, holder.icon);
                 } catch (PackageManager.NameNotFoundException e) {
                     holder.title.setText(info.name);
                     holder.packageName.setVisibility(View.GONE);
-                    holder.iconLoader = new IconLoaderThread(holder.icon, null);
-                    holder.iconLoader.start();
+                    activity.imageLoader.displayImage(info.name, null, holder.icon);
                 }
             } else {
                 holder.icon.setVisibility(View.GONE);
@@ -274,7 +278,6 @@ public class SysConfigActivity extends BaseActivity {
             public TextView packageName;
             public TextView subtitle;
             public ImageView icon;
-            public IconLoaderThread iconLoader;
 
             public ViewHolder(@NonNull View itemView) {
                 super(itemView);

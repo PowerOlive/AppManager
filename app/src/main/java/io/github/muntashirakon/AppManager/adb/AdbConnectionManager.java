@@ -20,12 +20,12 @@ public class AdbConnectionManager {
     @NonNull
     private static KeyPair getAdbKeyPair() throws Exception {
         KeyStoreManager keyStoreManager = KeyStoreManager.getInstance();
-        KeyPair keyPair = keyStoreManager.getKeyPairNoThrow(ADB_KEY_ALIAS, null);
+        KeyPair keyPair = keyStoreManager.getKeyPairNoThrow(ADB_KEY_ALIAS);
         if (keyPair == null) {
             String subject = "CN=App Manager";
             keyPair = KeyStoreUtils.generateRSAKeyPair(subject, AdbCrypto.KEY_LENGTH_BITS,
                     System.currentTimeMillis() + 86400000);
-            keyStoreManager.addKeyPair(ADB_KEY_ALIAS, keyPair, null, true);
+            keyStoreManager.addKeyPair(ADB_KEY_ALIAS, keyPair, true);
         }
         return keyPair;
     }
@@ -38,12 +38,5 @@ public class AdbConnectionManager {
         // Connect to ADB
         adbConnection.connect();
         return adbConnection;
-    }
-
-    @WorkerThread
-    @NonNull
-    public static AdbStream openShell(String host, int port) throws Exception {
-        AdbConnection connection = connect(host, port);
-        return connection.open("shell:");
     }
 }

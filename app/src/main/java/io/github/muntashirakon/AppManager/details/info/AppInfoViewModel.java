@@ -44,7 +44,8 @@ import io.github.muntashirakon.AppManager.usage.AppUsageStatsManager;
 import io.github.muntashirakon.AppManager.usage.UsageUtils;
 import io.github.muntashirakon.AppManager.users.Users;
 import io.github.muntashirakon.AppManager.utils.AppPref;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
+import io.github.muntashirakon.AppManager.utils.ArrayUtils;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
 import io.github.muntashirakon.AppManager.utils.KeyStoreUtils;
 import io.github.muntashirakon.AppManager.utils.MagiskUtils;
 import io.github.muntashirakon.AppManager.utils.PackageUtils;
@@ -128,12 +129,16 @@ public class AppInfoViewModel extends AndroidViewModel {
         tagCloud.isMagiskHideEnabled = !mainModel.getIsExternalApk() && AppPref.isRootEnabled() && MagiskUtils.isHidden(packageName);
         tagCloud.hasKeyStoreItems = KeyStoreUtils.hasKeyStore(applicationInfo.uid);
         tagCloud.hasMasterKeyInKeyStore = KeyStoreUtils.hasMasterKey(applicationInfo.uid);
-        MetadataManager.Metadata[] metadata = MetadataManager.getMetadata(packageName);
-        CharSequence[] readableBackupNames = new CharSequence[metadata.length];
-        for (int i = 0; i < metadata.length; ++i) {
-            readableBackupNames[i] = metadata[i].toLocalizedString(getApplication());
+        try {
+            MetadataManager.Metadata[] metadata = MetadataManager.getMetadata(packageName);
+            CharSequence[] readableBackupNames = new CharSequence[metadata.length];
+            for (int i = 0; i < metadata.length; ++i) {
+                readableBackupNames[i] = metadata[i].toLocalizedString(getApplication());
+            }
+            tagCloud.readableBackupNames = readableBackupNames;
+        } catch (IOException e) {
+            tagCloud.readableBackupNames = ArrayUtils.emptyArray(CharSequence.class);
         }
-        tagCloud.readableBackupNames = readableBackupNames;
         if (!mainModel.getIsExternalApk() && PermissionUtils.hasDumpPermission()) {
             String targetString = "user," + packageName + "," + applicationInfo.uid;
             Runner.Result result = Runner.runCommand(new String[]{"dumpsys", "deviceidle", "whitelist"});
@@ -176,7 +181,7 @@ public class AppInfoViewModel extends AndroidViewModel {
         PackageInfo packageInfo = mainModel.getPackageInfo();
         String packageName = packageInfo.packageName;
         ApplicationInfo applicationInfo = packageInfo.applicationInfo;
-        int userHandle = Users.getUserHandle(applicationInfo.uid);
+        int userHandle = Users.getUserId(applicationInfo.uid);
         PackageManager pm = getApplication().getPackageManager();
         boolean isExternalApk = mainModel.getIsExternalApk();
         AppInfo appInfo = new AppInfo();
@@ -284,10 +289,10 @@ public class AppInfoViewModel extends AndroidViewModel {
             File txFile = new ProxyFile(uidStatsDir, UID_STATS_TX);
             File rxFile = new ProxyFile(uidStatsDir, UID_STATS_RX);
             if (txFile.exists()) {
-                tx = Long.parseLong(IOUtils.getFileContent(txFile, "0").trim());
+                tx = Long.parseLong(FileUtils.getFileContent(txFile, "0").trim());
             }
             if (rxFile.exists()) {
-                rx = Long.parseLong(IOUtils.getFileContent(rxFile, "0").trim());
+                rx = Long.parseLong(FileUtils.getFileContent(rxFile, "0").trim());
             }
         }
         return new AppUsageStatsManager.DataUsage(tx, rx);

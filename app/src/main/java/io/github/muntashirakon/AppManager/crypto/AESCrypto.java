@@ -2,8 +2,6 @@
 
 package io.github.muntashirakon.AppManager.crypto;
 
-import android.os.RemoteException;
-
 import androidx.annotation.AnyThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -16,7 +14,6 @@ import org.bouncycastle.crypto.modes.GCMBlockCipher;
 import org.bouncycastle.crypto.params.AEADParameters;
 import org.bouncycastle.crypto.params.KeyParameter;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -32,10 +29,8 @@ import io.github.muntashirakon.AppManager.backup.CryptoUtils;
 import io.github.muntashirakon.AppManager.crypto.ks.KeyStoreManager;
 import io.github.muntashirakon.AppManager.crypto.ks.SecretKeyCompat;
 import io.github.muntashirakon.AppManager.logs.Log;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
-import io.github.muntashirakon.io.ProxyFile;
-import io.github.muntashirakon.io.ProxyInputStream;
-import io.github.muntashirakon.io.ProxyOutputStream;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
+import io.github.muntashirakon.io.Path;
 
 public class AESCrypto implements Crypto {
     public static final String TAG = "AESCrypto";
@@ -50,7 +45,7 @@ public class AESCrypto implements Crypto {
     private final AEADParameters spec;
     @CryptoUtils.Mode
     private final String parentMode;
-    private final List<File> newFiles = new ArrayList<>();
+    private final List<Path> newFiles = new ArrayList<>();
 
     public AESCrypto(@NonNull byte[] iv) throws CryptoException {
         this(iv, CryptoUtils.MODE_AES, null);
@@ -62,7 +57,7 @@ public class AESCrypto implements Crypto {
         if (parentMode.equals(CryptoUtils.MODE_AES)) {
             try {
                 KeyStoreManager keyStoreManager = KeyStoreManager.getInstance();
-                this.secretKey = keyStoreManager.getSecretKey(AES_KEY_ALIAS, null);
+                this.secretKey = keyStoreManager.getSecretKey(AES_KEY_ALIAS);
                 if (this.secretKey == null) {
                     throw new CryptoException("No SecretKey with alias " + AES_KEY_ALIAS);
                 }
@@ -98,7 +93,7 @@ public class AESCrypto implements Crypto {
 
     @WorkerThread
     @Override
-    public boolean encrypt(@NonNull File[] files) {
+    public boolean encrypt(@NonNull Path[] files) {
         return handleFiles(true, files);
     }
 
@@ -110,13 +105,13 @@ public class AESCrypto implements Crypto {
         cipher.init(true, spec);
         // Convert unencrypted stream to encrypted stream
         try (OutputStream cipherOS = new CipherOutputStream(encryptedStream, cipher)) {
-            IOUtils.copy(unencryptedStream, cipherOS);
+            FileUtils.copy(unencryptedStream, cipherOS);
         }
     }
 
     @WorkerThread
     @Override
-    public boolean decrypt(@NonNull File[] files) {
+    public boolean decrypt(@NonNull Path[] files) {
         return handleFiles(false, files);
     }
 
@@ -128,12 +123,12 @@ public class AESCrypto implements Crypto {
         cipher.init(false, spec);
         // Convert encrypted stream to unencrypted stream
         try (InputStream cipherIS = new CipherInputStream(encryptedStream, cipher)) {
-            IOUtils.copy(cipherIS, unencryptedStream);
+            FileUtils.copy(cipherIS, unencryptedStream);
         }
     }
 
     @WorkerThread
-    private boolean handleFiles(boolean forEncryption, @NonNull File[] files) {
+    private boolean handleFiles(boolean forEncryption, @NonNull Path[] files) {
         newFiles.clear();
         if (files.length > 0) {  // files is never null here
             // Init cipher
@@ -142,32 +137,40 @@ public class AESCrypto implements Crypto {
             // Get desired extension
             String ext = CryptoUtils.getExtension(parentMode);
             // Encrypt/decrypt files
-            for (File file : files) {
-                File outputFilename;
+            for (Path inputPath : files) {
+                Path parent = inputPath.getParentFile();
+                if (parent == null) {
+                    Log.e(TAG, "Parent file cannot be null.");
+                    return false;
+                }
+                String outputFilename;
                 if (!forEncryption) {
-                    outputFilename = new ProxyFile(file.getAbsolutePath().substring(0, file.getAbsolutePath().lastIndexOf(ext)));
-                } else outputFilename = new ProxyFile(file.getAbsolutePath() + ext);
-                newFiles.add(outputFilename);
-                Log.i(TAG, "Input: " + file + "\nOutput: " + outputFilename);
-                try (InputStream is = new ProxyInputStream(file);
-                     OutputStream os = new ProxyOutputStream(outputFilename)) {
-                    if (forEncryption) {
-                        try (OutputStream cipherOS = new CipherOutputStream(os, cipher)) {
-                            IOUtils.copy(is, cipherOS);
-                        }
-                    } else {  // Cipher.DECRYPT_MODE
-                        try (InputStream cipherIS = new CipherInputStream(is, cipher)) {
-                            IOUtils.copy(cipherIS, os);
+                    outputFilename = inputPath.getName().substring(0, inputPath.getName().lastIndexOf(ext));
+                } else outputFilename = inputPath.getName() + ext;
+                try {
+                    Path outputPath = parent.createNewFile(outputFilename, null);
+                    newFiles.add(outputPath);
+                    Log.i(TAG, "Input: " + inputPath + "\nOutput: " + outputPath);
+                    try (InputStream is = inputPath.openInputStream();
+                         OutputStream os = outputPath.openOutputStream()) {
+                        if (forEncryption) {
+                            try (OutputStream cipherOS = new CipherOutputStream(os, cipher)) {
+                                FileUtils.copy(is, cipherOS);
+                            }
+                        } else {  // Cipher.DECRYPT_MODE
+                            try (InputStream cipherIS = new CipherInputStream(is, cipher)) {
+                                FileUtils.copy(cipherIS, os);
+                            }
                         }
                     }
-                } catch (IOException | RemoteException e) {
-                    Log.e(TAG, "Error: " + e.toString(), e);
+                } catch (IOException e) {
+                    Log.e(TAG, "Error: " + e.getMessage(), e);
                     return false;
                 }
                 // Delete unencrypted file
                 if (forEncryption) {
-                    if (!file.delete()) {
-                        Log.e(TAG, "Couldn't delete old file " + file);
+                    if (!inputPath.delete()) {
+                        Log.e(TAG, "Couldn't delete old file " + inputPath);
                         return false;
                     }
                 }
@@ -182,8 +185,8 @@ public class AESCrypto implements Crypto {
     @AnyThread
     @NonNull
     @Override
-    public File[] getNewFiles() {
-        return newFiles.toArray(new File[0]);
+    public Path[] getNewFiles() {
+        return newFiles.toArray(new Path[0]);
     }
 
     @Override

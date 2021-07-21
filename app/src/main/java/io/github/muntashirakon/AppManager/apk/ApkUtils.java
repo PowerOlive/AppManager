@@ -2,9 +2,14 @@
 
 package io.github.muntashirakon.AppManager.apk;
 
+import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.WorkerThread;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
@@ -18,16 +23,16 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.WorkerThread;
 import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.StaticDataset;
 import io.github.muntashirakon.AppManager.apk.splitapk.SplitApkExporter;
 import io.github.muntashirakon.AppManager.backup.BackupFiles;
 import io.github.muntashirakon.AppManager.servermanager.PackageManagerCompat;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
-import io.github.muntashirakon.io.ProxyFile;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
+import io.github.muntashirakon.io.IoUtils;
+import io.github.muntashirakon.io.Path;
+
+import static io.github.muntashirakon.AppManager.utils.PackageUtils.flagMatchUninstalled;
 
 public final class ApkUtils {
     public static final String EXT_APK = ".apk";
@@ -37,21 +42,21 @@ public final class ApkUtils {
 
     @WorkerThread
     @NonNull
-    public static File getSharableApkFile(@NonNull PackageInfo packageInfo) throws Exception {
+    public static Path getSharableApkFile(@NonNull PackageInfo packageInfo) throws Exception {
         ApplicationInfo info = packageInfo.applicationInfo;
-        PackageManager pm = AppManager.getContext().getPackageManager();
-        String outputName = IOUtils.getSanitizedFileName(info.loadLabel(pm).toString() + "_" +
+        Context ctx = AppManager.getContext();
+        PackageManager pm = ctx.getPackageManager();
+        String outputName = FileUtils.getSanitizedFileName(info.loadLabel(pm).toString() + "_" +
                 packageInfo.versionName, false);
         if (outputName == null) outputName = info.packageName;
-        File tmpPublicSource;
+        Path tmpPublicSource;
         if (isSplitApk(info)) {
             // Split apk
-            tmpPublicSource = new File(AppManager.getContext().getExternalCacheDir(), outputName + EXT_APKS);
+            tmpPublicSource = new Path(ctx, new File(AppManager.getContext().getExternalCacheDir(), outputName + EXT_APKS));
             SplitApkExporter.saveApks(packageInfo, tmpPublicSource);
         } else {
             // Regular apk
-            tmpPublicSource = new File(AppManager.getContext().getExternalCacheDir(), outputName + EXT_APK);
-            IOUtils.copy(new ProxyFile(packageInfo.applicationInfo.publicSourceDir), tmpPublicSource);
+            tmpPublicSource = new Path(ctx, new File(packageInfo.applicationInfo.publicSourceDir));
         }
         return tmpPublicSource;
     }
@@ -64,27 +69,30 @@ public final class ApkUtils {
      */
     @WorkerThread
     public static boolean backupApk(String packageName, int userHandle) {
-        File backupPath = BackupFiles.getApkBackupDirectory();
-        if (!backupPath.exists()) {
-            if (!backupPath.mkdirs()) return false;
+        Path backupPath;
+        try {
+            backupPath = BackupFiles.getApkBackupDirectory();
+        } catch (IOException e) {
+            return false;
         }
         // Fetch package info
+        Context ctx = AppManager.getContext();
         try {
-            PackageManager pm = AppManager.getContext().getPackageManager();
-            PackageInfo packageInfo = PackageManagerCompat.getPackageInfo(packageName, 0, userHandle);
+            PackageManager pm = ctx.getPackageManager();
+            PackageInfo packageInfo = PackageManagerCompat.getPackageInfo(packageName, flagMatchUninstalled, userHandle);
             ApplicationInfo info = packageInfo.applicationInfo;
-            String outputName = IOUtils.getSanitizedFileName(info.loadLabel(pm).toString() + "_" +
+            String outputName = FileUtils.getSanitizedFileName(info.loadLabel(pm).toString() + "_" +
                     packageInfo.versionName, false);
             if (outputName == null) outputName = packageName;
-            File apkFile;
+            Path apkFile;
             if (isSplitApk(info)) {
                 // Split apk
-                apkFile = new ProxyFile(backupPath, outputName + EXT_APKS);
+                apkFile = backupPath.createNewFile(outputName + EXT_APKS, null);
                 SplitApkExporter.saveApks(packageInfo, apkFile);
             } else {
                 // Regular apk
-                apkFile = new ProxyFile(backupPath, outputName + EXT_APK);
-                IOUtils.copy(new ProxyFile(info.publicSourceDir), apkFile);
+                apkFile = backupPath.createNewFile(outputName + EXT_APK, null);
+                FileUtils.copy(new Path(ctx, new File(info.publicSourceDir)), apkFile);
             }
             return true;
         } catch (Exception e) {
@@ -104,12 +112,12 @@ public final class ApkUtils {
             ZipEntry zipEntry;
             while (archiveEntries.hasMoreElements()) {
                 zipEntry = archiveEntries.nextElement();
-                if (!IOUtils.getLastPathComponent(zipEntry.getName()).equals(MANIFEST_FILE)) {
+                if (!zipEntry.getName().equals(MANIFEST_FILE)) {
                     continue;
                 }
                 try (InputStream zipInputStream = zipFile.getInputStream(zipEntry)) {
                     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                    byte[] buf = new byte[IOUtils.DEFAULT_BUFFER_SIZE];
+                    byte[] buf = new byte[IoUtils.DEFAULT_BUFFER_SIZE];
                     int n;
                     while (-1 != (n = zipInputStream.read(buf))) {
                         buffer.write(buf, 0, n);
@@ -126,11 +134,11 @@ public final class ApkUtils {
         try (ZipInputStream zipInputStream = new ZipInputStream(new BufferedInputStream(apkInputStream))) {
             ZipEntry zipEntry;
             while ((zipEntry = zipInputStream.getNextEntry()) != null) {
-                if (!IOUtils.getLastPathComponent(zipEntry.getName()).equals(MANIFEST_FILE)) {
+                if (!FileUtils.getLastPathComponent(zipEntry.getName()).equals(MANIFEST_FILE)) {
                     continue;
                 }
                 ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-                byte[] buf = new byte[IOUtils.DEFAULT_BUFFER_SIZE];
+                byte[] buf = new byte[IoUtils.DEFAULT_BUFFER_SIZE];
                 int n;
                 while (-1 != (n = zipInputStream.read(buf))) {
                     buffer.write(buf, 0, n);
@@ -139,12 +147,12 @@ public final class ApkUtils {
             }
         }
         // This could be due to a Zip error, try caching the APK
-        File cachedApk = IOUtils.getCachedFile(apkInputStream);
+        File cachedApk = FileUtils.getCachedFile(apkInputStream);
         ByteBuffer byteBuffer;
         try {
             byteBuffer = getManifestFromApk(cachedApk);
         } finally {
-            IOUtils.deleteSilently(cachedApk);
+            FileUtils.deleteSilently(cachedApk);
         }
         return byteBuffer;
     }

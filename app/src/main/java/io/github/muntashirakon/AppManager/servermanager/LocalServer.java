@@ -6,9 +6,15 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.RemoteException;
 
+import androidx.annotation.AnyThread;
 import androidx.annotation.GuardedBy;
 import androidx.annotation.NonNull;
 import androidx.annotation.WorkerThread;
+
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.SocketTimeoutException;
+
 import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.BuildConfig;
 import io.github.muntashirakon.AppManager.IAMService;
@@ -20,10 +26,6 @@ import io.github.muntashirakon.AppManager.users.Users;
 import io.github.muntashirakon.AppManager.utils.AppPref;
 import io.github.muntashirakon.AppManager.utils.ContextUtils;
 
-import java.io.IOException;
-import java.net.ServerSocket;
-import java.net.SocketTimeoutException;
-
 // Copyright 2016 Zheng Li
 public class LocalServer {
     @GuardedBy("lockObject")
@@ -34,6 +36,7 @@ public class LocalServer {
     private static IAMService amService;
 
     @GuardedBy("lockObject")
+    @WorkerThread
     public static LocalServer getInstance() throws RemoteException, IOException {
         // Non-null check must be done outside the synchronised block to prevent deadlock on ADB over TCP mode.
         if (localServer != null) return localServer;
@@ -51,12 +54,26 @@ public class LocalServer {
         return localServer;
     }
 
+    @WorkerThread
     public static void launchAmService() throws RemoteException {
         if (amService == null || !amService.asBinder().pingBinder()) {
             amService = IPCUtils.getAmService();
         }
     }
 
+    @WorkerThread
+    public static boolean isAdbAvailable() {
+        try {
+            LocalServerManager manager = LocalServerManager.getInstance();
+            manager.updateConfig(new Config());
+            manager.tryAdb();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @WorkerThread
     public static boolean isLocalServerAlive() {
         if (localServer != null) return true;
         else {
@@ -68,32 +85,26 @@ public class LocalServer {
         }
     }
 
+    @AnyThread
     public static boolean isAMServiceAlive() {
         if (amService != null) return amService.asBinder().pingBinder();
         else return false;
     }
 
     private final LocalServerManager mLocalServerManager;
-    private final Context mContext;
 
-    private LocalServer() {
-        mContext = ContextUtils.getDeContext(AppManager.getContext());
-        Config config = new Config();
-        config.context = mContext;
-        updateConfig(config);
-        int userHandleId = Users.getCurrentUserHandle();
-        ServerConfig.init(config.context, userHandleId);
-        mLocalServerManager = LocalServerManager.getInstance(config);
+    @WorkerThread
+    private LocalServer() throws IOException {
+        mLocalServerManager = LocalServerManager.getInstance();
+        // Initialise necessary files and permissions
+        ServerConfig.init(getConfig().context, Users.myUserId());
         // Check if am.jar is in the right place
         checkFile();
         // Start server if not already
-        try {
-            checkConnect();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        checkConnect();
     }
 
+    @AnyThread
     Config getConfig() {
         return mLocalServerManager.getConfig();
     }
@@ -141,6 +152,7 @@ public class LocalServer {
         }
     }
 
+    @AnyThread
     public boolean isRunning() {
         return mLocalServerManager != null && mLocalServerManager.isRunning();
     }
@@ -151,6 +163,7 @@ public class LocalServer {
         }
     }
 
+    @WorkerThread
     public void closeBgServer() {
         if (mLocalServerManager != null) {
             mLocalServerManager.closeBgServer();
@@ -158,18 +171,25 @@ public class LocalServer {
         }
     }
 
-    private void checkFile() {
-        AssetsUtils.copyFile(mContext, ServerConfig.JAR_NAME, ServerConfig.getDestJarFile(), BuildConfig.DEBUG);
+    @WorkerThread
+    private void checkFile() throws IOException {
+        AssetsUtils.copyFile(getConfig().context, ServerConfig.JAR_NAME, ServerConfig.getDestJarFile(), BuildConfig.DEBUG);
         AssetsUtils.writeScript(getConfig());
     }
 
+    @WorkerThread
     public static void restart() throws IOException, RemoteException {
-        LocalServerManager manager = getInstance().mLocalServerManager;
-        manager.closeBgServer();
-        manager.stop();
-        manager.start();
+        if (localServer != null) {
+            LocalServerManager manager = localServer.mLocalServerManager;
+            manager.closeBgServer();
+            manager.stop();
+            manager.start();
+        } else {
+            getInstance();
+        }
     }
 
+    @AnyThread
     public static void updateConfig() {
         if (localServer != null) {
             Config config = localServer.getConfig();
@@ -179,6 +199,7 @@ public class LocalServer {
         }
     }
 
+    @AnyThread
     private static void updateConfig(@NonNull Config config) {
         config.allowBgRunning = ServerConfig.getAllowBgRunning();
         config.adbPort = ServerConfig.getAdbPort();
@@ -186,10 +207,19 @@ public class LocalServer {
     }
 
     public static class Config {
-        public boolean allowBgRunning = false;
         public boolean printLog = false;
-        public String adbHost = ServerConfig.getAdbHost();
-        public int adbPort = ServerConfig.getAdbPort();
-        Context context;
+        public boolean allowBgRunning;
+        public String adbHost;
+        public int adbPort;
+
+        final Context context;
+
+        @WorkerThread
+        public Config() {
+            allowBgRunning = ServerConfig.getAllowBgRunning();
+            adbHost = ServerConfig.getAdbHost();
+            adbPort = ServerConfig.getAdbPort();
+            context = ContextUtils.getDeContext(AppManager.getContext());
+        }
     }
 }

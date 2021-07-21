@@ -5,6 +5,10 @@ package io.github.muntashirakon.AppManager.servermanager;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 
+import androidx.annotation.AnyThread;
+import androidx.annotation.NonNull;
+import androidx.annotation.WorkerThread;
+
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
@@ -15,17 +19,19 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.security.SecureRandom;
 
-import androidx.annotation.NonNull;
 import io.github.muntashirakon.AppManager.BuildConfig;
 import io.github.muntashirakon.AppManager.server.common.ConfigParam;
 import io.github.muntashirakon.AppManager.server.common.Constants;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
 import io.github.muntashirakon.AppManager.utils.Utils;
+import io.github.muntashirakon.io.IoUtils;
 
 // Copyright 2016 Zheng Li
 @SuppressWarnings("ResultOfMethodCallIgnored")
 class AssetsUtils {
-    public static void copyFile(@NonNull Context context, String fileName, File destFile, boolean force) {
+    @WorkerThread
+    public static void copyFile(@NonNull Context context, String fileName, File destFile, boolean force)
+            throws IOException {
         try (AssetFileDescriptor openFd = context.getAssets().openFd(fileName)) {
             if (force) {
                 destFile.delete();
@@ -41,7 +47,7 @@ class AssetsUtils {
 
             try (FileInputStream open = openFd.createInputStream();
                  FileOutputStream fos = new FileOutputStream(destFile)) {
-                byte[] buff = new byte[IOUtils.DEFAULT_BUFFER_SIZE];
+                byte[] buff = new byte[IoUtils.DEFAULT_BUFFER_SIZE];
                 int len;
                 while ((len = open.read(buff)) != -1) {
                     fos.write(buff, 0, len);
@@ -49,13 +55,12 @@ class AssetsUtils {
                 fos.flush();
                 fos.getFD().sync();
             }
-            IOUtils.chmod644(destFile);
-        } catch (IOException e) {
-            e.printStackTrace();
+            FileUtils.chmod644(destFile);
         }
     }
 
-    static void writeScript(@NonNull LocalServer.Config config) {
+    @WorkerThread
+    static void writeScript(@NonNull LocalServer.Config config) throws IOException {
         try (AssetFileDescriptor openFd = config.context.getAssets().openFd(ServerConfig.EXECUTABLE_FILE_NAME);
              FileInputStream fdInputStream = openFd.createInputStream();
              InputStreamReader inputStreamReader = new InputStreamReader(fdInputStream);
@@ -94,12 +99,11 @@ class AssetsUtils {
                 }
                 bw.flush();
             }
-            IOUtils.chmod644(destFile);
-        } catch (IOException e) {
-            e.printStackTrace();
+            FileUtils.chmod644(destFile);
         }
     }
 
+    @AnyThread
     @NonNull
     static String generateToken() {
         SecureRandom secureRandom = new SecureRandom();

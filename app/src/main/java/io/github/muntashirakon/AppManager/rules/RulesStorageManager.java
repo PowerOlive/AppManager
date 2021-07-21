@@ -2,6 +2,7 @@
 
 package io.github.muntashirakon.AppManager.rules;
 
+import android.content.Context;
 import android.os.RemoteException;
 
 import androidx.annotation.GuardedBy;
@@ -21,6 +22,7 @@ import java.util.List;
 import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.appops.AppOpsManager;
 import io.github.muntashirakon.AppManager.appops.AppOpsService;
+import io.github.muntashirakon.AppManager.rules.compontents.ComponentUtils;
 import io.github.muntashirakon.AppManager.rules.struct.AppOpRule;
 import io.github.muntashirakon.AppManager.rules.struct.BatteryOptimizationRule;
 import io.github.muntashirakon.AppManager.rules.struct.ComponentRule;
@@ -36,8 +38,8 @@ import io.github.muntashirakon.AppManager.servermanager.PermissionCompat;
 import io.github.muntashirakon.AppManager.types.UserPackagePair;
 import io.github.muntashirakon.AppManager.uri.UriManager;
 import io.github.muntashirakon.AppManager.utils.PackageUtils;
+import io.github.muntashirakon.io.Path;
 import io.github.muntashirakon.io.ProxyFileReader;
-import io.github.muntashirakon.io.ProxyOutputStream;
 
 public class RulesStorageManager implements Closeable {
     @NonNull
@@ -77,6 +79,15 @@ public class RulesStorageManager implements Closeable {
         synchronized (entries) {
             List<T> newEntries = new ArrayList<>();
             for (RuleEntry entry : entries) if (type.isInstance(entry)) newEntries.add(type.cast(entry));
+            return newEntries;
+        }
+    }
+
+    @GuardedBy("entries")
+    public List<RuleEntry> getAll(List<RuleType> types) {
+        synchronized (entries) {
+            List<RuleEntry> newEntries = new ArrayList<>();
+            for (RuleEntry entry : entries) if (types.contains(entry.type)) newEntries.add(entry);
             return newEntries;
         }
     }
@@ -129,8 +140,8 @@ public class RulesStorageManager implements Closeable {
         addUniqueEntry(new AppOpRule(packageName, op, mode));
     }
 
-    public void setPermission(String name, boolean isGranted) {
-        addUniqueEntry(new PermissionRule(packageName, name, isGranted, 0));
+    public void setPermission(String name, boolean isGranted, @PermissionCompat.PermissionFlags int flags) {
+        addUniqueEntry(new PermissionRule(packageName, name, isGranted, flags));
     }
 
     public void setNotificationListener(String name, boolean isGranted) {
@@ -237,7 +248,7 @@ public class RulesStorageManager implements Closeable {
     }
 
     @GuardedBy("entries")
-    protected void loadEntries(File file, boolean isExternal) throws IOException, RemoteException {
+    protected void loadEntries(Path file, boolean isExternal) throws IOException, RemoteException {
         String dataRow;
         try (BufferedReader TSVFile = new BufferedReader(new ProxyFileReader(file))) {
             while ((dataRow = TSVFile.readLine()) != null) {
@@ -261,7 +272,7 @@ public class RulesStorageManager implements Closeable {
 
     @WorkerThread
     @GuardedBy("entries")
-    public void commitExternal(File tsvRulesFile) {
+    public void commitExternal(Path tsvRulesFile) {
         try {
             saveEntries(tsvRulesFile, true);
         } catch (IOException | RemoteException ex) {
@@ -271,35 +282,31 @@ public class RulesStorageManager implements Closeable {
 
     @WorkerThread
     @GuardedBy("entries")
-    protected void saveEntries(File tsvRulesFile, boolean isExternal) throws IOException, RemoteException {
+    protected void saveEntries(Path tsvRulesFile, boolean isExternal) throws IOException, RemoteException {
         synchronized (entries) {
             if (entries.size() == 0) {
-                //noinspection ResultOfMethodCallIgnored
                 tsvRulesFile.delete();
                 return;
             }
-            StringBuilder stringBuilder = new StringBuilder();
-            for (RuleEntry entry : entries) {
-                stringBuilder.append(entry.flattenToString(isExternal)).append("\n");
-            }
-            try (OutputStream TSVFile = new ProxyOutputStream(tsvRulesFile)) {
-                TSVFile.write(stringBuilder.toString().getBytes());
+            try (OutputStream TSVFile = tsvRulesFile.openOutputStream()) {
+                ComponentUtils.storeRules(TSVFile, entries, isExternal);
             }
         }
     }
 
     @NonNull
-    public static File getConfDir() {
-        return new File(AppManager.getContext().getFilesDir(), "conf");
+    public static Path getConfDir() {
+        Context ctx = AppManager.getContext();
+        return new Path(ctx, new File(ctx.getFilesDir(), "conf"));
     }
 
     @NonNull
-    protected File getDesiredFile() throws FileNotFoundException {
-        File confDir = getConfDir();
-        if (!confDir.exists() && !confDir.mkdirs()) {
-            throw new FileNotFoundException("Can not get correct path to save ifw rules");
+    protected Path getDesiredFile() throws FileNotFoundException {
+        Path confDir = getConfDir();
+        if (!confDir.exists()) {
+            confDir.mkdirs();
         }
-        return new File(confDir, packageName + ".tsv");
+        return confDir.findFile(packageName + ".tsv");
     }
 
 }

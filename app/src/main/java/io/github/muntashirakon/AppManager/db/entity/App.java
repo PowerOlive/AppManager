@@ -6,18 +6,21 @@ import android.content.Context;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.util.Pair;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.pm.PackageInfoCompat;
 import androidx.room.ColumnInfo;
 import androidx.room.Entity;
+
+import java.io.File;
+import java.io.Serializable;
+import java.util.Objects;
+
 import io.github.muntashirakon.AppManager.backup.MetadataManager;
 import io.github.muntashirakon.AppManager.rules.compontents.ComponentUtils;
 import io.github.muntashirakon.AppManager.users.Users;
 import io.github.muntashirakon.AppManager.utils.Utils;
-
-import java.io.Serializable;
-import java.util.Objects;
 
 @SuppressWarnings("NotNullFieldNotInitialized")
 @Entity(tableName = "app", primaryKeys = {"package_name", "user_id"})
@@ -116,8 +119,9 @@ public class App implements Serializable {
         ApplicationInfo applicationInfo = packageInfo.applicationInfo;
         app.packageName = applicationInfo.packageName;
         app.uid = applicationInfo.uid;
-        app.userId = Users.getUserHandle(app.uid);
-        app.isInstalled = (applicationInfo.flags & ApplicationInfo.FLAG_INSTALLED) != 0;
+        app.userId = Users.getUserId(app.uid);
+        app.isInstalled = (applicationInfo.flags & ApplicationInfo.FLAG_INSTALLED) != 0
+                && applicationInfo.publicSourceDir != null && new File(applicationInfo.publicSourceDir).exists();
         app.flags = applicationInfo.flags;
         app.isEnabled = applicationInfo.enabled;
         app.packageLabel = applicationInfo.loadLabel(context.getPackageManager()).toString();
@@ -163,6 +167,34 @@ public class App implements Serializable {
         app.rulesCount = 0;
         app.trackerCount = 0;
         app.lastActionTime = metadata.backupTime;
+        return app;
+    }
+
+    @NonNull
+    public static App fromBackup(@NonNull Backup backup) {
+        App app = new App();
+        app.packageName = backup.packageName;
+        app.uid = 0;
+        app.userId = backup.userId;
+        app.isInstalled = false;
+        if (backup.isSystem) {
+            app.flags |= ApplicationInfo.FLAG_SYSTEM;
+        }
+        app.isEnabled = true;
+        app.packageLabel = backup.label;
+        app.sdk = 0;
+        app.versionName = backup.versionName;
+        app.versionCode = backup.versionCode;
+        app.sharedUserId = null;
+        app.certName = "";
+        app.certAlgo = "";
+        app.firstInstallTime = backup.backupTime;
+        app.lastUpdateTime = backup.backupTime;
+        app.hasActivities = false;
+        app.hasSplits = backup.hasSplits;
+        app.rulesCount = 0;
+        app.trackerCount = 0;
+        app.lastActionTime = backup.backupTime;
         return app;
     }
 

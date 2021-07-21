@@ -2,6 +2,10 @@
 
 package io.github.muntashirakon.AppManager.logs;
 
+import androidx.annotation.IntDef;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -13,10 +17,9 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
-import androidx.annotation.IntDef;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import io.github.muntashirakon.AppManager.AppManager;
 import io.github.muntashirakon.AppManager.BuildConfig;
 
@@ -46,14 +49,14 @@ public class Log {
         INSTANCE = new Log();
     }
 
-    @NonNull
-    private final PrintWriter writer;
+    @Nullable
+    private PrintWriter writer;
+    private final ExecutorService executor = Executors.newFixedThreadPool(1);
 
     private Log() {
         try {
             writer = new PrintWriter(new BufferedWriter(new FileWriter(LOG_FILE)));
-        } catch (IOException e) {
-            throw new RuntimeException("Could not write to log file.", e);
+        } catch (IOException ignore) {
         }
     }
 
@@ -130,6 +133,8 @@ public class Log {
     }
 
     private static void println(@Level int level, @Nullable String tag, @Nullable String msg, @Nullable Throwable tr) {
+        if (INSTANCE.writer == null) return;
+
         StringBuilder sb = new StringBuilder();
         sb.append(DATE_FORMAT.format(new Date(System.currentTimeMillis()))).append(" ");
         switch (level) {
@@ -154,7 +159,8 @@ public class Log {
         }
         sb.append(tag == null ? "App Manager" : tag);
         if (msg != null) sb.append(": ").append(msg);
-        new Thread(() -> {
+
+        INSTANCE.executor.submit(() -> {
             synchronized (INSTANCE) {
                 INSTANCE.writer.println(sb);
                 if (tr != null) {
@@ -162,6 +168,6 @@ public class Log {
                 }
                 INSTANCE.writer.flush();
             }
-        }).start();
+        });
     }
 }

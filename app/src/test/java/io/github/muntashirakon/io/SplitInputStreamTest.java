@@ -2,10 +2,12 @@
 
 package io.github.muntashirakon.io;
 
-import io.github.muntashirakon.AppManager.utils.DigestUtils;
-import io.github.muntashirakon.AppManager.utils.IOUtils;
+import android.content.Context;
+
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -14,23 +16,29 @@ import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.Assert.*;
+import io.github.muntashirakon.AppManager.AppManager;
+import io.github.muntashirakon.AppManager.utils.DigestUtils;
+import io.github.muntashirakon.AppManager.utils.FileUtils;
 
+import static org.junit.Assert.assertEquals;
+
+@RunWith(RobolectricTestRunner.class)
 public class SplitInputStreamTest {
-    private final List<File> fileList = new ArrayList<>();
+    private final List<Path> fileList = new ArrayList<>();
     private final ClassLoader classLoader = getClass().getClassLoader();
+    private final Context context = AppManager.getContext();
 
     @Before
     public void setUp() {
         assert classLoader != null;
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.0").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.1").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.2").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.3").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.4").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.5").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.6").getFile()));
-        fileList.add(new File(classLoader.getResource("AppManager_v2.5.22.apks.7").getFile()));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.0").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.1").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.2").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.3").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.4").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.5").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.6").getFile())));
+        fileList.add(new Path(context, new File(classLoader.getResource("AppManager_v2.5.22.apks.7").getFile())));
     }
 
     @Test
@@ -38,7 +46,7 @@ public class SplitInputStreamTest {
         File file = new File("/tmp/AppManager_v2.5.22.apks");
         try (SplitInputStream splitInputStream = new SplitInputStream(fileList);
              OutputStream outputStream = new FileOutputStream(file)) {
-            IOUtils.copy(splitInputStream, outputStream);
+            FileUtils.copy(splitInputStream, outputStream);
         }
         assert classLoader != null;
         String expectedHash = DigestUtils.getHexDigest(DigestUtils.SHA_256, new File(classLoader.getResource("AppManager_v2.5.22.apks").getFile()));
